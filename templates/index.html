@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="pt-BR">
 <head>
@@ -16,55 +15,164 @@
     <a class="logout" href="{{ url_for('sair') }}">Sair</a>
   </header>
 
-  <main class="container">
+  <main class="container wide-container">
     {% with messages = get_flashed_messages() %}
       {% for message in messages %}
         <div class="success">{{ message }}</div>
       {% endfor %}
     {% endwith %}
 
-    <form method="post">
-      <section class="card">
-        <h2>Painel principal</h2>
+    <form method="post" id="menu-form">
+      <div class="editor-grid">
+        <div class="editor-column">
+          <section class="card">
+            <div class="section-heading">
+              <div>
+                <h2>Painel principal</h2>
+                <p>Edite o conteúdo oficial do <b>/menu</b>.</p>
+              </div>
+            </div>
 
-        <label for="titulo">Título</label>
-        <input id="titulo" name="titulo" value="{{ config.titulo }}" maxlength="256">
+            <label for="titulo">Título</label>
+            <input id="titulo" name="titulo" value="{{ config.titulo }}" maxlength="256">
 
-        <label for="descricao">Descrição</label>
-        <textarea id="descricao" name="descricao" maxlength="4000">{{ config.descricao }}</textarea>
+            <label for="descricao">Descrição</label>
+            <textarea id="descricao" name="descricao" maxlength="4000">{{ config.descricao }}</textarea>
 
-        <label for="cor">Cor do embed</label>
-        <div class="color-row">
-          <span>#</span>
-          <input id="cor" name="cor" value="{{ config.cor }}" maxlength="6" placeholder="5865F2">
+            <label for="cor">Cor do embed</label>
+            <div class="color-row">
+              <span>#</span>
+              <input id="cor" name="cor" value="{{ config.cor }}" maxlength="6" placeholder="5865F2">
+              <span id="color-swatch" class="color-swatch" aria-hidden="true"></span>
+            </div>
+          </section>
+
+          {% for botao in config.botoes %}
+          <section class="card button-editor-card">
+            <h2>Botão {{ loop.index }}</h2>
+
+            <div class="two">
+              <div>
+                <label for="emoji_{{ loop.index0 }}">Emoji</label>
+                <input id="emoji_{{ loop.index0 }}" name="emoji_{{ loop.index0 }}" value="{{ botao.emoji }}" placeholder="⭐">
+              </div>
+              <div>
+                <label for="nome_{{ loop.index0 }}">Nome</label>
+                <input id="nome_{{ loop.index0 }}" name="nome_{{ loop.index0 }}" value="{{ botao.nome }}" maxlength="80">
+              </div>
+            </div>
+
+            <label for="resposta_{{ loop.index0 }}">Resposta ao clicar</label>
+            <textarea id="resposta_{{ loop.index0 }}" name="resposta_{{ loop.index0 }}" maxlength="4000">{{ botao.resposta }}</textarea>
+          </section>
+          {% endfor %}
         </div>
-      </section>
 
-      {% for botao in config.botoes %}
-      <section class="card">
-        <h2>Botão {{ loop.index }}</h2>
+        <aside class="preview-column">
+          <section class="card preview-card">
+            <div class="preview-header">
+              <div>
+                <span class="eyebrow">PRÉ-VISUALIZAÇÃO</span>
+                <h2>Como vai aparecer no Discord</h2>
+              </div>
+              <span class="live-dot"><i></i> Ao vivo</span>
+            </div>
 
-        <div class="two">
-          <div>
-            <label for="emoji_{{ loop.index0 }}">Emoji</label>
-            <input id="emoji_{{ loop.index0 }}" name="emoji_{{ loop.index0 }}" value="{{ botao.emoji }}" placeholder="⭐">
-          </div>
-          <div>
-            <label for="nome_{{ loop.index0 }}">Nome</label>
-            <input id="nome_{{ loop.index0 }}" name="nome_{{ loop.index0 }}" value="{{ botao.nome }}" maxlength="80">
-          </div>
-        </div>
+            <div class="discord-stage">
+              <div class="discord-message">
+                <div class="bot-avatar">R</div>
+                <div class="discord-content">
+                  <div class="discord-author-row">
+                    <strong>RESENHA MAXIMA</strong>
+                    <span class="app-badge">APP</span>
+                    <span class="timestamp">agora</span>
+                  </div>
 
-        <label for="resposta_{{ loop.index0 }}">Resposta ao clicar</label>
-        <textarea id="resposta_{{ loop.index0 }}" name="resposta_{{ loop.index0 }}" maxlength="4000">{{ botao.resposta }}</textarea>
-      </section>
-      {% endfor %}
+                  <div class="discord-embed" id="preview-embed">
+                    <div class="discord-embed-body">
+                      <div class="discord-embed-title" id="preview-title">{{ config.titulo }}</div>
+                      <div class="discord-embed-description" id="preview-description">{{ config.descricao }}</div>
+                    </div>
+                  </div>
+
+                  <div class="discord-buttons" id="preview-buttons">
+                    {% for botao in config.botoes %}
+                      <button class="discord-button" type="button" tabindex="-1">
+                        <span class="preview-button-emoji">{{ botao.emoji }}</span>
+                        <span class="preview-button-name">{{ botao.nome }}</span>
+                      </button>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="preview-note">
+              A prévia é visual. As respostas dos botões podem ser testadas enviando para o Discord.
+            </div>
+          </section>
+        </aside>
+      </div>
 
       <div class="savebar">
-        <span>As mudanças entram no próximo <b>/menu</b>.</span>
-        <button type="submit">💾 Salvar alterações</button>
+        <div class="savebar-copy">
+          <strong>As mudanças só viram oficiais quando você salvar.</strong>
+          <span>Canal de teste: <code>{{ canal_teste_id }}</code></span>
+        </div>
+
+        <div class="save-actions">
+          <button class="secondary-button" type="submit" name="acao" value="testar">🧪 Enviar teste para o Discord</button>
+          <button type="submit" name="acao" value="salvar">💾 Salvar alterações</button>
+        </div>
       </div>
     </form>
   </main>
+
+  <script>
+    (() => {
+      const titulo = document.getElementById('titulo');
+      const descricao = document.getElementById('descricao');
+      const cor = document.getElementById('cor');
+      const previewTitle = document.getElementById('preview-title');
+      const previewDescription = document.getElementById('preview-description');
+      const previewEmbed = document.getElementById('preview-embed');
+      const colorSwatch = document.getElementById('color-swatch');
+
+      const normalizarCor = (valor) => {
+        const limpa = (valor || '').replace('#', '').trim();
+        return /^[0-9A-Fa-f]{6}$/.test(limpa) ? `#${limpa}` : '#5865F2';
+      };
+
+      const atualizarPreview = () => {
+        previewTitle.textContent = titulo.value.trim() || 'Menu';
+        previewDescription.textContent = descricao.value.trim() || 'Escolha uma opção.';
+
+        const corAtual = normalizarCor(cor.value);
+        previewEmbed.style.setProperty('--embed-color', corAtual);
+        colorSwatch.style.background = corAtual;
+
+        for (let i = 0; i < 3; i++) {
+          const emojiInput = document.getElementById(`emoji_${i}`);
+          const nomeInput = document.getElementById(`nome_${i}`);
+          const button = document.querySelectorAll('.discord-button')[i];
+
+          if (!button) continue;
+
+          const emoji = button.querySelector('.preview-button-emoji');
+          const nome = button.querySelector('.preview-button-name');
+
+          emoji.textContent = emojiInput.value.trim();
+          emoji.style.display = emojiInput.value.trim() ? '' : 'none';
+          nome.textContent = nomeInput.value.trim() || 'Opção';
+        }
+      };
+
+      document.querySelectorAll('#menu-form input, #menu-form textarea').forEach((campo) => {
+        campo.addEventListener('input', atualizarPreview);
+      });
+
+      atualizarPreview();
+    })();
+  </script>
 </body>
 </html>

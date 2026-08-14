@@ -1,4 +1,3 @@
-
 * { box-sizing: border-box; }
 
 :root {
@@ -6,6 +5,7 @@
   --bg: #111214;
   --surface: #1e1f22;
   --surface2: #2b2d31;
+  --surface3: #313338;
   --line: #3f4147;
   --text: #f2f3f5;
   --muted: #b5bac1;
@@ -31,7 +31,7 @@ body {
   border-bottom: 1px solid #2b2d31;
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: 20;
 }
 
 .topbar strong { display: block; font-size: 18px; }
@@ -50,12 +50,48 @@ body {
   margin: 28px auto 100px;
 }
 
+.wide-container {
+  width: min(1420px, 94%);
+}
+
+.editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(390px, .9fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.editor-column,
+.preview-column {
+  min-width: 0;
+}
+
+.preview-column {
+  position: sticky;
+  top: 88px;
+}
+
 .card {
   padding: 20px;
   margin-bottom: 16px;
   background: var(--surface);
   border: 1px solid #2b2d31;
   border-radius: 14px;
+}
+
+.section-heading,
+.preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.section-heading p,
+.preview-header p {
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 h1, h2 { margin-top: 0; }
@@ -96,10 +132,18 @@ textarea {
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 240px;
+  max-width: 300px;
 }
 
 .color-row span { color: var(--muted); font-weight: 700; }
+
+.color-swatch {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 9px;
+  border: 1px solid rgba(255,255,255,.14);
+}
 
 button {
   border: 0;
@@ -114,6 +158,11 @@ button {
 
 button:hover { filter: brightness(1.08); }
 
+.secondary-button {
+  background: var(--surface2);
+  border: 1px solid var(--line);
+}
+
 .savebar {
   display: flex;
   align-items: center;
@@ -121,6 +170,7 @@ button:hover { filter: brightness(1.08); }
   gap: 20px;
   position: sticky;
   bottom: 14px;
+  z-index: 15;
   padding: 14px;
   background: rgba(30, 31, 34, .96);
   border: 1px solid #3f4147;
@@ -128,7 +178,21 @@ button:hover { filter: brightness(1.08); }
   backdrop-filter: blur(8px);
 }
 
-.savebar span { color: var(--muted); }
+.savebar-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.savebar-copy strong { font-size: 14px; }
+.savebar-copy span { color: var(--muted); font-size: 13px; }
+.savebar-copy code { color: #dbdee1; }
+
+.save-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 
 .success, .alert {
   margin-bottom: 16px;
@@ -138,6 +202,188 @@ button:hover { filter: brightness(1.08); }
 
 .success { background: var(--green); }
 .alert { background: var(--red); }
+
+/* =======================================================
+   PRÉVIA ESTILO DISCORD
+   ======================================================= */
+
+.preview-card {
+  overflow: hidden;
+}
+
+.preview-header {
+  margin-bottom: 16px;
+}
+
+.preview-header h2 {
+  margin: 3px 0 0;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.live-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #dbdee1;
+  background: #24262a;
+  border: 1px solid #3a3d43;
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.live-dot i {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  border-radius: 50%;
+  background: #23a559;
+  box-shadow: 0 0 0 3px rgba(35,165,89,.12);
+}
+
+.discord-stage {
+  padding: 20px 14px;
+  background: var(--surface3);
+  border-radius: 12px;
+  border: 1px solid #3a3d43;
+  overflow: hidden;
+}
+
+.discord-message {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.bot-avatar {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #5865f2, #7d86ff);
+  color: white;
+  font-weight: 900;
+}
+
+.discord-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.discord-author-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  flex-wrap: wrap;
+}
+
+.discord-author-row strong {
+  font-size: 14px;
+}
+
+.app-badge {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #5865f2;
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.timestamp {
+  color: #949ba4;
+  font-size: 11px;
+}
+
+.discord-embed {
+  --embed-color: #5865F2;
+  position: relative;
+  margin-top: 7px;
+  width: min(520px, 100%);
+  background: #2b2d31;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(0,0,0,.06);
+}
+
+.discord-embed::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--embed-color);
+}
+
+.discord-embed-body {
+  padding: 13px 14px 14px 16px;
+}
+
+.discord-embed-title {
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1.3;
+  color: #f2f3f5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.discord-embed-description {
+  margin-top: 7px;
+  color: #dbdee1;
+  font-size: 14px;
+  line-height: 1.42;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.discord-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.discord-button {
+  pointer-events: none;
+  min-height: 32px;
+  padding: 6px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #5865f2;
+  border-radius: 3px;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 100%;
+}
+
+.preview-button-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-note {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* =======================================================
+   LOGIN
+   ======================================================= */
 
 .login-wrap {
   min-height: 100vh;
@@ -158,8 +404,38 @@ button:hover { filter: brightness(1.08); }
 .login-card button { width: 100%; margin-top: 14px; }
 .brand { font-size: 36px; margin-bottom: 10px; }
 
+@media (max-width: 1050px) {
+  .editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-column {
+    position: static;
+  }
+}
+
 @media (max-width: 650px) {
   .two { grid-template-columns: 1fr; }
-  .savebar { align-items: stretch; flex-direction: column; }
+
+  .savebar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .save-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   .savebar button { width: 100%; }
+
+  .discord-stage {
+    padding: 16px 10px;
+  }
+
+  .bot-avatar {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
 }

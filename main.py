@@ -1,4 +1,4 @@
-
+import asyncio
 import os
 import json
 import threading
@@ -24,6 +24,9 @@ if not PANEL_PASSWORD:
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_FILE = DATA_DIR / "menu_config.json"
+
+# Canal usado apenas para prévias/testes enviados pelo painel.
+CANAL_TESTE_ID = 1537936115233722388
 
 DEFAULT_CONFIG = {
     "titulo": "📋 Menu do Servidor",
@@ -71,6 +74,35 @@ def salvar_config(config):
         salvar_config_sem_lock(config)
 
 
+def config_do_formulario(form):
+    titulo = form.get("titulo", "").strip()
+    descricao = form.get("descricao", "").strip()
+    cor = form.get("cor", "5865F2").replace("#", "").strip().upper()
+
+    if len(cor) != 6:
+        raise ValueError("A cor precisa ter 6 caracteres, por exemplo: 5865F2.")
+
+    try:
+        int(cor, 16)
+    except ValueError as exc:
+        raise ValueError("Cor inválida. Use apenas números 0-9 e letras A-F.") from exc
+
+    botoes = []
+    for i in range(3):
+        botoes.append({
+            "emoji": form.get(f"emoji_{i}", "").strip(),
+            "nome": form.get(f"nome_{i}", "").strip()[:80],
+            "resposta": form.get(f"resposta_{i}", "").strip()[:4000]
+        })
+
+    return {
+        "titulo": titulo[:256],
+        "descricao": descricao[:4000],
+        "cor": cor,
+        "botoes": botoes
+    }
+
+
 # =========================================================
 # SITE / PAINEL WEB
 # =========================================================
@@ -111,45 +143,51 @@ def painel():
     config = carregar_config()
 
     if request.method == "POST":
-        titulo = request.form.get("titulo", "").strip()
-        descricao = request.form.get("descricao", "").strip()
-        cor = request.form.get("cor", "5865F2").replace("#", "").strip().upper()
-
-        if len(cor) != 6:
-            flash("A cor precisa ter 6 caracteres, por exemplo: 5865F2.")
-            return redirect(url_for("painel"))
+        acao = request.form.get("acao", "salvar")
 
         try:
-            int(cor, 16)
-        except ValueError:
-            flash("Cor inválida. Use apenas números 0-9 e letras A-F.")
-            return redirect(url_for("painel"))
+            novo_config = config_do_formulario(request.form)
+        except ValueError as erro:
+            flash(f"❌ {erro}")
+            return render_template("index.html", config=config, canal_teste_id=CANAL_TESTE_ID)
 
-        botoes = []
-        for i in range(3):
-            botoes.append({
-                "emoji": request.form.get(f"emoji_{i}", "").strip(),
-                "nome": request.form.get(f"nome_{i}", "").strip()[:80],
-                "resposta": request.form.get(f"resposta_{i}", "").strip()[:4000]
-            })
+        if acao == "testar":
+            if not TOKEN:
+                flash("❌ TOKEN não configurado. Não foi possível enviar a prévia ao Discord.")
+                return render_template("index.html", config=novo_config, canal_teste_id=CANAL_TESTE_ID)
 
-        novo_config = {
-            "titulo": titulo[:256],
-            "descricao": descricao[:4000],
-            "cor": cor,
-            "botoes": botoes
-        }
+            if not bot.is_ready() or BOT_LOOP is None:
+                flash("❌ O bot ainda não está conectado ao Discord. Tente novamente em alguns segundos.")
+                return render_template("index.html", config=novo_config, canal_teste_id=CANAL_TESTE_ID)
+
+            try:
+                futuro = asyncio.run_coroutine_threadsafe(
+                    enviar_teste_discord(novo_config),
+                    BOT_LOOP
+                )
+                futuro.result(timeout=15)
+                flash("🧪 Prévia enviada ao Discord. Nenhuma configuração oficial foi alterada.")
+            except Exception as erro:
+                print(f"Erro ao enviar prévia pelo painel: {repr(erro)}")
+                flash(f"❌ Não foi possível enviar a prévia: {erro}")
+
+            return render_template("index.html", config=novo_config, canal_teste_id=CANAL_TESTE_ID)
 
         salvar_config(novo_config)
         flash("✅ Alterações salvas. O próximo /menu já usará essas configurações.")
         return redirect(url_for("painel"))
 
-    return render_template("index.html", config=config)
+    return render_template("index.html", config=config, canal_teste_id=CANAL_TESTE_ID)
 
 
 @app.route("/status")
 def status():
-    return {"site": "online", "bot_configurado": bool(os.getenv("TOKEN"))}, 200
+    return {
+        "site": "online",
+        "bot_configurado": bool(os.getenv("TOKEN")),
+        "bot_conectado": bot.is_ready() if TOKEN else False,
+        "canal_teste_id": CANAL_TESTE_ID
+    }, 200
 
 
 # =========================================================
@@ -158,14 +196,22 @@ def status():
 
 TOKEN = os.getenv("TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
+BOT_LOOP = None
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
+def cor_da_config(config):
+    try:
+        return int(config.get("cor", "5865F2"), 16)
+    except (ValueError, TypeError):
+        return 0x5865F2
+
+
 class MenuView(discord.ui.View):
-    def __init__(self, config):
-        super().__init__(timeout=300)
+    def __init__(self, config, timeout=300):
+        super().__init__(timeout=timeout)
 
         for botao_config in config.get("botoes", [])[:3]:
             nome = botao_config.get("nome") or "Opção"
@@ -197,19 +243,43 @@ class MenuView(discord.ui.View):
             self.add_item(botao)
 
 
-@bot.tree.command(name="menu", description="Abre o menu principal do servidor.")
-async def menu(interaction: discord.Interaction):
-    config = carregar_config()
+async def enviar_teste_discord(config):
+    canal = bot.get_channel(CANAL_TESTE_ID)
 
-    try:
-        cor = int(config.get("cor", "5865F2"), 16)
-    except ValueError:
-        cor = 0x5865F2
+    if canal is None:
+        try:
+            canal = await bot.fetch_channel(CANAL_TESTE_ID)
+        except discord.NotFound as exc:
+            raise RuntimeError("Canal de teste não encontrado.") from exc
+        except discord.Forbidden as exc:
+            raise RuntimeError("O bot não tem acesso ao canal de teste.") from exc
+        except discord.HTTPException as exc:
+            raise RuntimeError(f"Erro do Discord ao localizar o canal: {exc}") from exc
+
+    if not hasattr(canal, "send"):
+        raise RuntimeError("O canal configurado não aceita mensagens.")
 
     embed = discord.Embed(
         title=config.get("titulo") or "Menu",
         description=config.get("descricao") or "Escolha uma opção.",
-        color=cor
+        color=cor_da_config(config)
+    )
+
+    await canal.send(
+        content="⚠️ **PRÉVIA / TESTE — não substitui o menu oficial**",
+        embed=embed,
+        view=MenuView(config)
+    )
+
+
+@bot.tree.command(name="menu", description="Abre o menu principal do servidor.")
+async def menu(interaction: discord.Interaction):
+    config = carregar_config()
+
+    embed = discord.Embed(
+        title=config.get("titulo") or "Menu",
+        description=config.get("descricao") or "Escolha uma opção.",
+        color=cor_da_config(config)
     )
 
     await interaction.response.send_message(
@@ -220,6 +290,9 @@ async def menu(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
+    global BOT_LOOP
+    BOT_LOOP = asyncio.get_running_loop()
+
     if getattr(bot, "_menu_sync_feito", False):
         print(f"Bot conectado como {bot.user}")
         return
