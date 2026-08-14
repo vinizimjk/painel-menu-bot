@@ -1,0 +1,70 @@
+
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel do /menu</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <strong>⚙️ Painel do /menu</strong>
+      <span>Configuração do bot</span>
+    </div>
+    <a class="logout" href="{{ url_for('sair') }}">Sair</a>
+  </header>
+
+  <main class="container">
+    {% with messages = get_flashed_messages() %}
+      {% for message in messages %}
+        <div class="success">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="post">
+      <section class="card">
+        <h2>Painel principal</h2>
+
+        <label for="titulo">Título</label>
+        <input id="titulo" name="titulo" value="{{ config.titulo }}" maxlength="256">
+
+        <label for="descricao">Descrição</label>
+        <textarea id="descricao" name="descricao" maxlength="4000">{{ config.descricao }}</textarea>
+
+        <label for="cor">Cor do embed</label>
+        <div class="color-row">
+          <span>#</span>
+          <input id="cor" name="cor" value="{{ config.cor }}" maxlength="6" placeholder="5865F2">
+        </div>
+      </section>
+
+      {% for botao in config.botoes %}
+      <section class="card">
+        <h2>Botão {{ loop.index }}</h2>
+
+        <div class="two">
+          <div>
+            <label for="emoji_{{ loop.index0 }}">Emoji</label>
+            <input id="emoji_{{ loop.index0 }}" name="emoji_{{ loop.index0 }}" value="{{ botao.emoji }}" placeholder="⭐">
+          </div>
+          <div>
+            <label for="nome_{{ loop.index0 }}">Nome</label>
+            <input id="nome_{{ loop.index0 }}" name="nome_{{ loop.index0 }}" value="{{ botao.nome }}" maxlength="80">
+          </div>
+        </div>
+
+        <label for="resposta_{{ loop.index0 }}">Resposta ao clicar</label>
+        <textarea id="resposta_{{ loop.index0 }}" name="resposta_{{ loop.index0 }}" maxlength="4000">{{ botao.resposta }}</textarea>
+      </section>
+      {% endfor %}
+
+      <div class="savebar">
+        <span>As mudanças entram no próximo <b>/menu</b>.</span>
+        <button type="submit">💾 Salvar alterações</button>
+      </div>
+    </form>
+  </main>
+</body>
+</html>
