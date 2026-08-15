@@ -9,13 +9,26 @@
 <body>
   <header class="topbar">
     <div>
-      <strong>⚙️ Central de Menus</strong>
-      <span>Configure um menu diferente para cada canal</span>
+      <div class="brand-lockup">
+        <div class="brand-mark">RM</div>
+        <div>
+          <strong>RESENHA MÁXIMA</strong>
+          <span>Central de Configuração • Menus do Discord</span>
+        </div>
+      </div>
     </div>
-    <a class="logout" href="{{ url_for('sair') }}">Sair</a>
+    <a class="logout" href="{{ url_for('sair') }}">Sair do painel</a>
   </header>
 
   <main class="container wide-container">
+    <section class="hero-panel">
+      <div class="hero-copy">
+        <span class="eyebrow gold">CENTRAL OFICIAL</span>
+        <h1>Resenha Máxima</h1>
+        <p>Gerencie os menus do servidor com a identidade preta e dourada da Resenha.</p>
+      </div>
+      <div class="hero-badge">RM</div>
+    </section>
     {% with messages = get_flashed_messages() %}
       {% for message in messages %}
         <div class="success">{{ message }}</div>
