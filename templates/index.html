@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Painel do /menu</title>
+  <title>Central de Menus</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <header class="topbar">
     <div>
-      <strong>⚙️ Painel do /menu</strong>
-      <span>Configuração do bot</span>
+      <strong>⚙️ Central de Menus</strong>
+      <span>Configure um menu diferente para cada canal</span>
     </div>
     <a class="logout" href="{{ url_for('sair') }}">Sair</a>
   </header>
@@ -22,14 +22,73 @@
       {% endfor %}
     {% endwith %}
 
+    <section class="channel-toolbar card">
+      <div class="channel-copy">
+        <span class="eyebrow">CANAL DO DISCORD</span>
+        <h2>Qual menu você quer editar?</h2>
+        <p>Cada canal pode ter título, descrição, cor e botões próprios.</p>
+      </div>
+
+      <form method="get" class="channel-picker">
+        <select name="canal" onchange="this.form.submit()" {% if not canais %}disabled{% endif %}>
+          {% if not canais %}
+            <option>Bot desconectado ou nenhum canal encontrado</option>
+          {% else %}
+            {% for canal in canais %}
+              <option value="{{ canal.id }}" {% if canal.id == canal_id %}selected{% endif %}>
+                # {{ canal.nome }} — {{ canal.categoria }}
+              </option>
+            {% endfor %}
+          {% endif %}
+        </select>
+      </form>
+    </section>
+
+    {% if menus_configurados %}
+    <section class="configured-card card">
+      <div class="section-heading">
+        <div>
+          <h2>Menus já configurados</h2>
+          <p>Clique em um canal para abrir a configuração salva.</p>
+        </div>
+        <span class="count-badge">{{ menus_configurados|length }}</span>
+      </div>
+
+      <div class="configured-list">
+        {% for menu in menus_configurados %}
+          <a
+            class="configured-item {% if menu.ativo %}active{% endif %}"
+            href="{{ url_for('painel', canal=menu.canal_id) }}"
+          >
+            <span class="channel-hash">#</span>
+            <span>
+              <strong>{{ menu.canal_nome }}</strong>
+              <small>{{ menu.titulo }}</small>
+            </span>
+          </a>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if canal_id %}
     <form method="post" id="menu-form">
+      <input type="hidden" name="canal_id" value="{{ canal_id }}">
+
       <div class="editor-grid">
         <div class="editor-column">
           <section class="card">
             <div class="section-heading">
               <div>
-                <h2>Painel principal</h2>
-                <p>Edite o conteúdo oficial do <b>/menu</b>.</p>
+                <span class="eyebrow">MENU DO CANAL</span>
+                <h2>
+                  {% if canal_atual %}
+                    # {{ canal_atual.nome }}
+                  {% else %}
+                    Canal {{ canal_id }}
+                  {% endif %}
+                </h2>
+                <p>Edite o conteúdo que será publicado com <b>/menu</b> neste canal.</p>
               </div>
             </div>
 
@@ -43,27 +102,42 @@
             <div class="color-row">
               <span>#</span>
               <input id="cor" name="cor" value="{{ config.cor }}" maxlength="6" placeholder="5865F2">
-              <span id="color-swatch" class="color-swatch" aria-hidden="true"></span>
+              <span id="color-swatch" class="color-swatch"></span>
             </div>
           </section>
 
           {% for botao in config.botoes %}
-          <section class="card button-editor-card">
+          <section class="card">
             <h2>Botão {{ loop.index }}</h2>
 
             <div class="two">
               <div>
                 <label for="emoji_{{ loop.index0 }}">Emoji</label>
-                <input id="emoji_{{ loop.index0 }}" name="emoji_{{ loop.index0 }}" value="{{ botao.emoji }}" placeholder="⭐">
+                <input
+                  id="emoji_{{ loop.index0 }}"
+                  name="emoji_{{ loop.index0 }}"
+                  value="{{ botao.emoji }}"
+                  placeholder="⭐"
+                >
               </div>
+
               <div>
                 <label for="nome_{{ loop.index0 }}">Nome</label>
-                <input id="nome_{{ loop.index0 }}" name="nome_{{ loop.index0 }}" value="{{ botao.nome }}" maxlength="80">
+                <input
+                  id="nome_{{ loop.index0 }}"
+                  name="nome_{{ loop.index0 }}"
+                  value="{{ botao.nome }}"
+                  maxlength="80"
+                >
               </div>
             </div>
 
             <label for="resposta_{{ loop.index0 }}">Resposta ao clicar</label>
-            <textarea id="resposta_{{ loop.index0 }}" name="resposta_{{ loop.index0 }}" maxlength="4000">{{ botao.resposta }}</textarea>
+            <textarea
+              id="resposta_{{ loop.index0 }}"
+              name="resposta_{{ loop.index0 }}"
+              maxlength="4000"
+            >{{ botao.resposta }}</textarea>
           </section>
           {% endfor %}
         </div>
@@ -78,9 +152,18 @@
               <span class="live-dot"><i></i> Ao vivo</span>
             </div>
 
+            <div class="preview-channel">
+              {% if canal_atual %}
+                Prévia de <strong>#{{ canal_atual.nome }}</strong>
+              {% else %}
+                Prévia do canal selecionado
+              {% endif %}
+            </div>
+
             <div class="discord-stage">
               <div class="discord-message">
                 <div class="bot-avatar">R</div>
+
                 <div class="discord-content">
                   <div class="discord-author-row">
                     <strong>RESENHA MAXIMA</strong>
@@ -108,7 +191,7 @@
             </div>
 
             <div class="preview-note">
-              A prévia é visual. As respostas dos botões podem ser testadas enviando para o Discord.
+              A prévia acima muda enquanto você digita. O teste no Discord continua sendo enviado ao canal de testes.
             </div>
           </section>
         </aside>
@@ -116,20 +199,58 @@
 
       <div class="savebar">
         <div class="savebar-copy">
-          <strong>As mudanças só viram oficiais quando você salvar.</strong>
-          <span>Canal de teste: <code>{{ canal_teste_id }}</code></span>
+          <strong>
+            {% if canal_atual %}
+              Editando #{{ canal_atual.nome }}
+            {% else %}
+              Editando o canal selecionado
+            {% endif %}
+          </strong>
+          <span>
+            Testes: <code>{{ canal_teste_id }}</code> •
+            O menu só vira oficial depois de <b>Salvar</b>.
+          </span>
         </div>
 
         <div class="save-actions">
-          <button class="secondary-button" type="submit" name="acao" value="testar">🧪 Enviar teste para o Discord</button>
-          <button type="submit" name="acao" value="salvar">💾 Salvar alterações</button>
+          {% if canal_id %}
+          <button
+            class="danger-button"
+            type="submit"
+            name="acao"
+            value="excluir"
+            onclick="return confirm('Remover a configuração de menu deste canal?')"
+          >🗑️ Excluir menu</button>
+          {% endif %}
+
+          <button
+            class="secondary-button"
+            type="submit"
+            name="acao"
+            value="testar"
+          >🧪 Enviar teste</button>
+
+          <button
+            type="submit"
+            name="acao"
+            value="salvar"
+          >💾 Salvar neste canal</button>
         </div>
       </div>
     </form>
+    {% else %}
+      <section class="card empty-state">
+        <h2>Nenhum canal disponível</h2>
+        <p>Confira se o bot está conectado e se a variável <code>GUILD_ID</code> aponta para o servidor correto.</p>
+      </section>
+    {% endif %}
   </main>
 
   <script>
     (() => {
+      const form = document.getElementById('menu-form');
+      if (!form) return;
+
       const titulo = document.getElementById('titulo');
       const descricao = document.getElementById('descricao');
       const cor = document.getElementById('cor');
@@ -151,12 +272,14 @@
         previewEmbed.style.setProperty('--embed-color', corAtual);
         colorSwatch.style.background = corAtual;
 
+        const botoes = document.querySelectorAll('.discord-button');
+
         for (let i = 0; i < 3; i++) {
           const emojiInput = document.getElementById(`emoji_${i}`);
           const nomeInput = document.getElementById(`nome_${i}`);
-          const button = document.querySelectorAll('.discord-button')[i];
+          const button = botoes[i];
 
-          if (!button) continue;
+          if (!button || !emojiInput || !nomeInput) continue;
 
           const emoji = button.querySelector('.preview-button-emoji');
           const nome = button.querySelector('.preview-button-name');
@@ -167,7 +290,7 @@
         }
       };
 
-      document.querySelectorAll('#menu-form input, #menu-form textarea').forEach((campo) => {
+      form.querySelectorAll('input, textarea').forEach((campo) => {
         campo.addEventListener('input', atualizarPreview);
       });
 

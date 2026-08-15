@@ -3,6 +3,7 @@ import os
 import json
 import threading
 import secrets
+from copy import deepcopy
 from pathlib import Path
 from functools import wraps
 
@@ -23,30 +24,40 @@ if not PANEL_PASSWORD:
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-CONFIG_FILE = DATA_DIR / "menu_config.json"
+
+# Novo arquivo: vários menus, um por canal.
+MENUS_FILE = DATA_DIR / "menus_config.json"
+
+# Arquivo antigo. Se existir, o painel consegue aproveitar a configuração
+# como modelo inicial sem apagar os dados antigos.
+CONFIG_ANTIGO_FILE = DATA_DIR / "menu_config.json"
 
 # Canal usado apenas para prévias/testes enviados pelo painel.
 CANAL_TESTE_ID = 1537936115233722388
 
-DEFAULT_CONFIG = {
+# Permissões do /menu deste serviço.
+DONO_ID = 1455937306400653344
+CARGO_DESENVOLVIMENTO_ID = 1533625836874498181
+
+DEFAULT_MENU = {
     "titulo": "📋 Menu do Servidor",
     "descricao": "Escolha uma das opções abaixo.",
     "cor": "5865F2",
     "botoes": [
         {
             "emoji": "⭐",
-            "nome": "Vantagens do Sub Civil",
-            "resposta": "🎵 Efeitos sonoros\n📹 Abrir câmera\n🖥️ Transmitir tela\n🚀 Ignorar modo lento\n🎨 Cor exclusiva\n⭐ Cargo destacado\n🔊 Prioridade de voz\n💬 Chat exclusivo"
+            "nome": "Opção 1",
+            "resposta": "Configure a resposta desta opção pelo painel."
         },
         {
             "emoji": "💬",
-            "nome": "Por onde interagir?",
-            "resposta": "A interação é feita pelo chat do servidor. A Loritta reconhece as mensagens e contabiliza a atividade."
+            "nome": "Opção 2",
+            "resposta": "Configure a resposta desta opção pelo painel."
         },
         {
             "emoji": "🏆",
-            "nome": "Como saber quem mais interagiu?",
-            "resposta": "Reinicie o XP 5 minutos antes do início. Ao final, confira o ranking da Loritta; quem estiver no topo vence."
+            "nome": "Opção 3",
+            "resposta": "Configure a resposta desta opção pelo painel."
         }
     ]
 }
@@ -54,24 +65,107 @@ DEFAULT_CONFIG = {
 _config_lock = threading.Lock()
 
 
-def carregar_config():
-    with _config_lock:
-        if not CONFIG_FILE.exists():
-            salvar_config_sem_lock(DEFAULT_CONFIG)
-        with CONFIG_FILE.open("r", encoding="utf-8") as arquivo:
-            return json.load(arquivo)
+def estrutura_vazia():
+    return {
+        "versao": 2,
+        "menus": {}
+    }
 
 
-def salvar_config_sem_lock(config):
-    temporario = CONFIG_FILE.with_suffix(".tmp")
+def salvar_menus_sem_lock(dados):
+    temporario = MENUS_FILE.with_suffix(".tmp")
     with temporario.open("w", encoding="utf-8") as arquivo:
-        json.dump(config, arquivo, ensure_ascii=False, indent=2)
-    temporario.replace(CONFIG_FILE)
+        json.dump(dados, arquivo, ensure_ascii=False, indent=2)
+    temporario.replace(MENUS_FILE)
 
 
-def salvar_config(config):
+def carregar_menus():
     with _config_lock:
-        salvar_config_sem_lock(config)
+        if not MENUS_FILE.exists():
+            salvar_menus_sem_lock(estrutura_vazia())
+
+        try:
+            with MENUS_FILE.open("r", encoding="utf-8") as arquivo:
+                dados = json.load(arquivo)
+        except (OSError, json.JSONDecodeError):
+            dados = estrutura_vazia()
+            salvar_menus_sem_lock(dados)
+
+        if not isinstance(dados, dict):
+            dados = estrutura_vazia()
+
+        if not isinstance(dados.get("menus"), dict):
+            dados["menus"] = {}
+
+        dados.setdefault("versao", 2)
+        return dados
+
+
+def salvar_menus(dados):
+    with _config_lock:
+        salvar_menus_sem_lock(dados)
+
+
+def carregar_config_antiga():
+    if not CONFIG_ANTIGO_FILE.exists():
+        return None
+
+    try:
+        with CONFIG_ANTIGO_FILE.open("r", encoding="utf-8") as arquivo:
+            config = json.load(arquivo)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(config, dict):
+        return None
+
+    if not isinstance(config.get("botoes"), list):
+        return None
+
+    return config
+
+
+def menu_padrao():
+    antigo = carregar_config_antiga()
+    if antigo:
+        config = deepcopy(DEFAULT_MENU)
+        config.update({
+            "titulo": antigo.get("titulo", config["titulo"]),
+            "descricao": antigo.get("descricao", config["descricao"]),
+            "cor": antigo.get("cor", config["cor"]),
+            "botoes": antigo.get("botoes", config["botoes"])[:3]
+        })
+        while len(config["botoes"]) < 3:
+            config["botoes"].append(deepcopy(DEFAULT_MENU["botoes"][len(config["botoes"])]))
+        return config
+
+    return deepcopy(DEFAULT_MENU)
+
+
+def normalizar_menu(config):
+    base = menu_padrao()
+
+    if not isinstance(config, dict):
+        return base
+
+    base["titulo"] = str(config.get("titulo") or base["titulo"])[:256]
+    base["descricao"] = str(config.get("descricao") or base["descricao"])[:4000]
+    base["cor"] = str(config.get("cor") or base["cor"]).replace("#", "").upper()[:6]
+
+    botoes_recebidos = config.get("botoes")
+    if isinstance(botoes_recebidos, list):
+        botoes = []
+        for i in range(3):
+            atual = botoes_recebidos[i] if i < len(botoes_recebidos) and isinstance(botoes_recebidos[i], dict) else {}
+            padrao = DEFAULT_MENU["botoes"][i]
+            botoes.append({
+                "emoji": str(atual.get("emoji") or padrao["emoji"])[:100],
+                "nome": str(atual.get("nome") or padrao["nome"])[:80],
+                "resposta": str(atual.get("resposta") or padrao["resposta"])[:4000]
+            })
+        base["botoes"] = botoes
+
+    return base
 
 
 def config_do_formulario(form):
@@ -90,7 +184,7 @@ def config_do_formulario(form):
     botoes = []
     for i in range(3):
         botoes.append({
-            "emoji": form.get(f"emoji_{i}", "").strip(),
+            "emoji": form.get(f"emoji_{i}", "").strip()[:100],
             "nome": form.get(f"nome_{i}", "").strip()[:80],
             "resposta": form.get(f"resposta_{i}", "").strip()[:4000]
         })
@@ -101,93 +195,6 @@ def config_do_formulario(form):
         "cor": cor,
         "botoes": botoes
     }
-
-
-# =========================================================
-# SITE / PAINEL WEB
-# =========================================================
-
-app = Flask(__name__)
-app.secret_key = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
-
-
-def login_obrigatorio(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        if not session.get("logado"):
-            return redirect(url_for("login"))
-        return func(*args, **kwargs)
-    return wrapper
-
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        senha = request.form.get("senha", "")
-        if secrets.compare_digest(senha, PANEL_PASSWORD):
-            session["logado"] = True
-            return redirect(url_for("painel"))
-        flash("Senha incorreta.")
-    return render_template("login.html")
-
-
-@app.route("/sair")
-def sair():
-    session.clear()
-    return redirect(url_for("login"))
-
-
-@app.route("/", methods=["GET", "POST"])
-@login_obrigatorio
-def painel():
-    config = carregar_config()
-
-    if request.method == "POST":
-        acao = request.form.get("acao", "salvar")
-
-        try:
-            novo_config = config_do_formulario(request.form)
-        except ValueError as erro:
-            flash(f"❌ {erro}")
-            return render_template("index.html", config=config, canal_teste_id=CANAL_TESTE_ID)
-
-        if acao == "testar":
-            if not TOKEN:
-                flash("❌ TOKEN não configurado. Não foi possível enviar a prévia ao Discord.")
-                return render_template("index.html", config=novo_config, canal_teste_id=CANAL_TESTE_ID)
-
-            if not bot.is_ready() or BOT_LOOP is None:
-                flash("❌ O bot ainda não está conectado ao Discord. Tente novamente em alguns segundos.")
-                return render_template("index.html", config=novo_config, canal_teste_id=CANAL_TESTE_ID)
-
-            try:
-                futuro = asyncio.run_coroutine_threadsafe(
-                    enviar_teste_discord(novo_config),
-                    BOT_LOOP
-                )
-                futuro.result(timeout=15)
-                flash("🧪 Prévia enviada ao Discord. Nenhuma configuração oficial foi alterada.")
-            except Exception as erro:
-                print(f"Erro ao enviar prévia pelo painel: {repr(erro)}")
-                flash(f"❌ Não foi possível enviar a prévia: {erro}")
-
-            return render_template("index.html", config=novo_config, canal_teste_id=CANAL_TESTE_ID)
-
-        salvar_config(novo_config)
-        flash("✅ Alterações salvas. O próximo /menu já usará essas configurações.")
-        return redirect(url_for("painel"))
-
-    return render_template("index.html", config=config, canal_teste_id=CANAL_TESTE_ID)
-
-
-@app.route("/status")
-def status():
-    return {
-        "site": "online",
-        "bot_configurado": bool(os.getenv("TOKEN")),
-        "bot_conectado": bot.is_ready() if TOKEN else False,
-        "canal_teste_id": CANAL_TESTE_ID
-    }, 200
 
 
 # =========================================================
@@ -207,6 +214,19 @@ def cor_da_config(config):
         return int(config.get("cor", "5865F2"), 16)
     except (ValueError, TypeError):
         return 0x5865F2
+
+
+def pode_usar_menu(membro):
+    if not isinstance(membro, discord.Member):
+        return False
+
+    if membro.id == DONO_ID:
+        return True
+
+    return any(
+        cargo.id == CARGO_DESENVOLVIMENTO_ID
+        for cargo in membro.roles
+    )
 
 
 class MenuView(discord.ui.View):
@@ -243,21 +263,79 @@ class MenuView(discord.ui.View):
             self.add_item(botao)
 
 
-async def enviar_teste_discord(config):
-    canal = bot.get_channel(CANAL_TESTE_ID)
+async def obter_canais_texto_discord():
+    if not bot.is_ready():
+        return []
+
+    guild = None
+
+    if GUILD_ID:
+        try:
+            guild = bot.get_guild(int(GUILD_ID))
+        except ValueError:
+            guild = None
+
+    if guild is None and bot.guilds:
+        guild = bot.guilds[0]
+
+    if guild is None:
+        return []
+
+    canais = []
+
+    for canal in guild.text_channels:
+        canais.append({
+            "id": str(canal.id),
+            "nome": canal.name,
+            "categoria": canal.category.name if canal.category else "Sem categoria",
+            "posicao": canal.position
+        })
+
+    canais.sort(key=lambda item: (item["categoria"].lower(), item["posicao"], item["nome"].lower()))
+    return canais
+
+
+def obter_canais_texto_sync():
+    if not TOKEN or not bot.is_ready() or BOT_LOOP is None:
+        return []
+
+    try:
+        futuro = asyncio.run_coroutine_threadsafe(
+            obter_canais_texto_discord(),
+            BOT_LOOP
+        )
+        return futuro.result(timeout=10)
+    except Exception as erro:
+        print(f"Erro ao obter canais do Discord: {repr(erro)}")
+        return []
+
+
+async def localizar_canal(canal_id):
+    try:
+        canal_id_int = int(canal_id)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("ID de canal inválido.") from exc
+
+    canal = bot.get_channel(canal_id_int)
 
     if canal is None:
         try:
-            canal = await bot.fetch_channel(CANAL_TESTE_ID)
+            canal = await bot.fetch_channel(canal_id_int)
         except discord.NotFound as exc:
-            raise RuntimeError("Canal de teste não encontrado.") from exc
+            raise RuntimeError("Canal não encontrado.") from exc
         except discord.Forbidden as exc:
-            raise RuntimeError("O bot não tem acesso ao canal de teste.") from exc
+            raise RuntimeError("O bot não tem acesso ao canal.") from exc
         except discord.HTTPException as exc:
             raise RuntimeError(f"Erro do Discord ao localizar o canal: {exc}") from exc
 
     if not hasattr(canal, "send"):
         raise RuntimeError("O canal configurado não aceita mensagens.")
+
+    return canal
+
+
+async def enviar_teste_discord(config):
+    canal = await localizar_canal(CANAL_TESTE_ID)
 
     embed = discord.Embed(
         title=config.get("titulo") or "Menu",
@@ -266,15 +344,36 @@ async def enviar_teste_discord(config):
     )
 
     await canal.send(
-        content="⚠️ **PRÉVIA / TESTE — não substitui o menu oficial**",
+        content="⚠️ **PRÉVIA / TESTE — não substitui nenhum menu oficial**",
         embed=embed,
         view=MenuView(config)
     )
 
 
-@bot.tree.command(name="menu", description="Abre o menu principal do servidor.")
+@bot.tree.command(
+    name="menu",
+    description="Envia o menu configurado para este canal."
+)
 async def menu(interaction: discord.Interaction):
-    config = carregar_config()
+    if not pode_usar_menu(interaction.user):
+        await interaction.response.send_message(
+            "❌ Você não possui autorização para publicar menus.",
+            ephemeral=True
+        )
+        return
+
+    dados = carregar_menus()
+    config = dados["menus"].get(str(interaction.channel_id))
+
+    if not config:
+        await interaction.response.send_message(
+            "❌ Não existe um menu configurado para este canal.\n"
+            "Configure este canal primeiro pelo painel web.",
+            ephemeral=True
+        )
+        return
+
+    config = normalizar_menu(config)
 
     embed = discord.Embed(
         title=config.get("titulo") or "Menu",
@@ -306,6 +405,7 @@ async def on_ready():
         else:
             comandos = await bot.tree.sync()
             print(f"{len(comandos)} comando(s) global(is) sincronizado(s).")
+
         bot._menu_sync_feito = True
     except Exception as erro:
         print(f"Erro ao sincronizar comandos: {erro}")
@@ -319,6 +419,215 @@ def iniciar_bot():
         return
 
     bot.run(TOKEN, log_handler=None)
+
+
+# =========================================================
+# SITE / PAINEL WEB
+# =========================================================
+
+app = Flask(__name__)
+app.secret_key = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
+
+
+def login_obrigatorio(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not session.get("logado"):
+            return redirect(url_for("login"))
+        return func(*args, **kwargs)
+    return wrapper
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        senha = request.form.get("senha", "")
+        if secrets.compare_digest(senha, PANEL_PASSWORD):
+            session["logado"] = True
+            return redirect(url_for("painel"))
+
+        flash("Senha incorreta.")
+
+    return render_template("login.html")
+
+
+@app.route("/sair")
+def sair():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+def contexto_painel(canal_id=None, config_temporaria=None):
+    dados = carregar_menus()
+    canais = obter_canais_texto_sync()
+
+    ids_validos = {canal["id"] for canal in canais}
+
+    if canal_id is not None:
+        canal_id = str(canal_id)
+
+    if not canal_id:
+        configurados = list(dados["menus"].keys())
+
+        for configurado in configurados:
+            if not ids_validos or configurado in ids_validos:
+                canal_id = configurado
+                break
+
+    if not canal_id and canais:
+        canal_id = canais[0]["id"]
+
+    canal_atual = next(
+        (canal for canal in canais if canal["id"] == canal_id),
+        None
+    )
+
+    if config_temporaria is not None:
+        config = normalizar_menu(config_temporaria)
+    elif canal_id and canal_id in dados["menus"]:
+        config = normalizar_menu(dados["menus"][canal_id])
+    else:
+        config = menu_padrao()
+
+    menus_configurados = []
+
+    for id_menu, menu in dados["menus"].items():
+        canal = next((item for item in canais if item["id"] == id_menu), None)
+        menus_configurados.append({
+            "canal_id": id_menu,
+            "canal_nome": canal["nome"] if canal else menu.get("canal_nome", f"Canal {id_menu}"),
+            "titulo": menu.get("titulo") or "Menu sem título",
+            "ativo": id_menu == canal_id
+        })
+
+    menus_configurados.sort(key=lambda item: item["canal_nome"].lower())
+
+    return {
+        "config": config,
+        "canais": canais,
+        "canal_id": canal_id,
+        "canal_atual": canal_atual,
+        "menus_configurados": menus_configurados,
+        "canal_teste_id": CANAL_TESTE_ID,
+        "bot_conectado": bot.is_ready() if TOKEN else False
+    }
+
+
+@app.route("/", methods=["GET", "POST"])
+@login_obrigatorio
+def painel():
+    if request.method == "GET":
+        canal_id = request.args.get("canal")
+        return render_template(
+            "index.html",
+            **contexto_painel(canal_id=canal_id)
+        )
+
+    acao = request.form.get("acao", "salvar")
+    canal_id = request.form.get("canal_id", "").strip()
+
+    if not canal_id:
+        flash("❌ Selecione um canal antes de editar o menu.")
+        return redirect(url_for("painel"))
+
+    try:
+        novo_config = config_do_formulario(request.form)
+    except ValueError as erro:
+        flash(f"❌ {erro}")
+        return render_template(
+            "index.html",
+            **contexto_painel(
+                canal_id=canal_id,
+                config_temporaria=request.form
+            )
+        )
+
+    canais = obter_canais_texto_sync()
+    canal_atual = next(
+        (canal for canal in canais if canal["id"] == canal_id),
+        None
+    )
+
+    if canais and canal_atual is None:
+        flash("❌ O canal selecionado não foi encontrado no servidor.")
+        return redirect(url_for("painel"))
+
+    if acao == "testar":
+        if not TOKEN:
+            flash("❌ TOKEN não configurado. Não foi possível enviar a prévia ao Discord.")
+            return render_template(
+                "index.html",
+                **contexto_painel(canal_id=canal_id, config_temporaria=novo_config)
+            )
+
+        if not bot.is_ready() or BOT_LOOP is None:
+            flash("❌ O bot ainda não está conectado ao Discord. Tente novamente em alguns segundos.")
+            return render_template(
+                "index.html",
+                **contexto_painel(canal_id=canal_id, config_temporaria=novo_config)
+            )
+
+        try:
+            futuro = asyncio.run_coroutine_threadsafe(
+                enviar_teste_discord(novo_config),
+                BOT_LOOP
+            )
+            futuro.result(timeout=15)
+            flash("🧪 Prévia enviada ao canal de testes. Nenhum menu oficial foi alterado.")
+        except Exception as erro:
+            print(f"Erro ao enviar prévia pelo painel: {repr(erro)}")
+            flash(f"❌ Não foi possível enviar a prévia: {erro}")
+
+        return render_template(
+            "index.html",
+            **contexto_painel(canal_id=canal_id, config_temporaria=novo_config)
+        )
+
+    if acao == "excluir":
+        dados = carregar_menus()
+
+        if canal_id in dados["menus"]:
+            del dados["menus"][canal_id]
+            salvar_menus(dados)
+            flash("🗑️ Menu removido deste canal.")
+        else:
+            flash("ℹ️ Este canal ainda não possuía um menu salvo.")
+
+        return redirect(url_for("painel", canal=canal_id))
+
+    dados = carregar_menus()
+
+    menu_salvo = deepcopy(novo_config)
+    menu_salvo["canal_id"] = canal_id
+    menu_salvo["canal_nome"] = (
+        canal_atual["nome"]
+        if canal_atual
+        else f"Canal {canal_id}"
+    )
+
+    dados["menus"][canal_id] = menu_salvo
+    salvar_menus(dados)
+
+    flash(
+        "✅ Menu salvo para "
+        f"#{menu_salvo['canal_nome']}. "
+        "Use /menu nesse canal para publicá-lo."
+    )
+
+    return redirect(url_for("painel", canal=canal_id))
+
+
+@app.route("/status")
+def status():
+    dados = carregar_menus()
+
+    return {
+        "site": "online",
+        "bot_configurado": bool(TOKEN),
+        "bot_conectado": bot.is_ready() if TOKEN else False,
+        "canal_teste_id": CANAL_TESTE_ID,
+        "menus_configurados": len(dados["menus"])
+    }, 200
 
 
 if __name__ == "__main__":
