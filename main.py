@@ -238,20 +238,44 @@ def pode_usar_menu(membro):
 
 
 class MenuView(discord.ui.View):
-    def __init__(self, config, timeout=300):
-        super().__init__(timeout=timeout)
+    """Menu oficial persistente do Discord."""
 
-        for indice, botao_config in enumerate(config.get("botoes", [])[:MAX_BOTOES]):
+    def __init__(
+        self,
+        config,
+        canal_id,
+        *,
+        persistente=True
+    ):
+        super().__init__(
+            timeout=None if persistente else 300
+        )
+
+        self.canal_id = str(canal_id)
+
+        for indice, botao_config in enumerate(
+            config.get("botoes", [])[:MAX_BOTOES]
+        ):
             nome = botao_config.get("nome") or "Opção"
             emoji = botao_config.get("emoji") or None
-            resposta = botao_config.get("resposta") or "Sem conteúdo configurado."
-
-            botao = discord.ui.Button(
-                label=nome[:80],
-                emoji=emoji,
-                style=discord.ButtonStyle.primary,
-                row=indice // 5
+            resposta = (
+                botao_config.get("resposta")
+                or "Sem conteúdo configurado."
             )
+
+            argumentos = {
+                "label": nome[:80],
+                "emoji": emoji,
+                "style": discord.ButtonStyle.primary,
+                "row": indice // 5
+            }
+
+            if persistente:
+                argumentos["custom_id"] = (
+                    f"rm_menu:{self.canal_id}:{indice}"
+                )
+
+            botao = discord.ui.Button(**argumentos)
 
             async def callback(
                 interaction: discord.Interaction,
@@ -261,7 +285,7 @@ class MenuView(discord.ui.View):
                 embed_resposta = discord.Embed(
                     title=titulo_botao,
                     description=texto,
-                    color=discord.Color.blurple()
+                    color=discord.Color.gold()
                 )
                 await interaction.response.send_message(
                     embed=embed_resposta,
@@ -270,6 +294,34 @@ class MenuView(discord.ui.View):
 
             botao.callback = callback
             self.add_item(botao)
+
+
+def registrar_views_persistentes():
+    """Reativa os botões dos menus salvos após reinício/deploy."""
+    if getattr(bot, "_views_menus_registradas", False):
+        return
+
+    dados = carregar_menus()
+    total = 0
+
+    for canal_id, config in dados["menus"].items():
+        try:
+            bot.add_view(
+                MenuView(
+                    normalizar_menu(config),
+                    canal_id,
+                    persistente=True
+                )
+            )
+            total += 1
+        except Exception as erro:
+            print(
+                f"Erro ao registrar menu persistente "
+                f"do canal {canal_id}: {erro}"
+            )
+
+    bot._views_menus_registradas = True
+    print(f"Views persistentes registradas: {total}")
 
 
 async def obter_canais_texto_discord():
@@ -355,7 +407,11 @@ async def enviar_teste_discord(config):
     await canal.send(
         content="⚠️ **PRÉVIA / TESTE — não substitui nenhum menu oficial**",
         embed=embed,
-        view=MenuView(config)
+        view=MenuView(
+            config,
+            f"teste_{secrets.token_hex(4)}",
+            persistente=False
+        )
     )
 
 
@@ -392,7 +448,11 @@ async def menu(interaction: discord.Interaction):
 
     await interaction.response.send_message(
         embed=embed,
-        view=MenuView(config)
+        view=MenuView(
+            config,
+            str(interaction.channel_id),
+            persistente=True
+        )
     )
 
 
@@ -400,6 +460,8 @@ async def menu(interaction: discord.Interaction):
 async def on_ready():
     global BOT_LOOP
     BOT_LOOP = asyncio.get_running_loop()
+
+    registrar_views_persistentes()
 
     if getattr(bot, "_menu_sync_feito", False):
         print(f"Bot conectado como {bot.user}")
@@ -605,26 +667,61 @@ def painel():
 
         return redirect(url_for("painel", canal=canal_id))
 
+    canal_destino_id = request.form.get(
+        "salvar_destino_id",
+        canal_id
+    ).strip()
+
+    if not canal_destino_id:
+        canal_destino_id = canal_id
+
+    canal_destino = next(
+        (
+            canal
+            for canal in canais
+            if canal["id"] == canal_destino_id
+        ),
+        None
+    )
+
+    if canais and canal_destino is None:
+        flash(
+            "❌ O canal escolhido para salvar "
+            "não foi encontrado no servidor."
+        )
+        return render_template(
+            "index.html",
+            **contexto_painel(
+                canal_id=canal_id,
+                config_temporaria=novo_config
+            )
+        )
+
     dados = carregar_menus()
 
     menu_salvo = deepcopy(novo_config)
-    menu_salvo["canal_id"] = canal_id
+    menu_salvo["canal_id"] = canal_destino_id
     menu_salvo["canal_nome"] = (
-        canal_atual["nome"]
-        if canal_atual
-        else f"Canal {canal_id}"
+        canal_destino["nome"]
+        if canal_destino
+        else f"Canal {canal_destino_id}"
     )
 
-    dados["menus"][canal_id] = menu_salvo
+    dados["menus"][canal_destino_id] = menu_salvo
     salvar_menus(dados)
 
     flash(
-        "✅ Menu salvo para "
+        "✅ Menu salvo em "
         f"#{menu_salvo['canal_nome']}. "
         "Use /menu nesse canal para publicá-lo."
     )
 
-    return redirect(url_for("painel", canal=canal_id))
+    return redirect(
+        url_for(
+            "painel",
+            canal=canal_destino_id
+        )
+    )
 
 
 @app.route("/status")
@@ -637,7 +734,10 @@ def status():
         "bot_conectado": bot.is_ready() if TOKEN else False,
         "canal_teste_id": CANAL_TESTE_ID,
         "menus_configurados": len(dados["menus"]),
-        "max_botoes": MAX_BOTOES
+        "max_botoes": MAX_BOTOES,
+        "views_persistentes": bool(
+            getattr(bot, "_views_menus_registradas", False)
+        )
     }, 200
 
 

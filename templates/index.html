@@ -182,16 +182,30 @@
 
       <div class="savebar">
         <div class="savebar-copy">
-          <strong>
+          <strong id="save-destination-label">
+            Destino atual:
             {% if canal_atual %}
-              Editando #{{ canal_atual.nome }}
+              #{{ canal_atual.nome }}
             {% else %}
-              Editando o canal selecionado
+              canal selecionado
             {% endif %}
           </strong>
+
+          <label for="salvar_destino_id" style="margin:0 0 4px;">
+            Salvar este menu em:
+          </label>
+          <select id="salvar_destino_id" name="salvar_destino_id">
+            {% for canal in canais %}
+              <option
+                value="{{ canal.id }}"
+                {% if canal.id == canal_id %}selected{% endif %}
+              ># {{ canal.nome }} — {{ canal.categoria }}</option>
+            {% endfor %}
+          </select>
+
           <span>
             Testes: <code>{{ canal_teste_id }}</code> •
-            O menu só vira oficial depois de <b>Salvar</b>.
+            Escolha o destino antes de salvar.
           </span>
         </div>
 
@@ -217,7 +231,8 @@
             type="submit"
             name="acao"
             value="salvar"
-          >💾 Salvar neste canal</button>
+            id="save-button"
+          >💾 Salvar no canal escolhido</button>
         </div>
       </div>
     </form>
@@ -258,6 +273,9 @@
       const pEmbed = document.getElementById('preview-embed');
       const swatch = document.getElementById('color-swatch');
       const pButtons = document.getElementById('preview-buttons');
+      const destination = document.getElementById('salvar_destino_id');
+      const destinationLabel = document.getElementById('save-destination-label');
+      const saveButton = document.getElementById('save-button');
 
       const cards = () => [...container.querySelectorAll('.option-card')];
       const normalizeColor = v => /^[0-9A-Fa-f]{6}$/.test((v||'').replace('#','').trim()) ? '#'+v.replace('#','').trim() : '#D4AF37';
@@ -290,6 +308,14 @@
         });
       }
 
+      function updateDestination() {
+        if (!destination) return;
+        const option = destination.options[destination.selectedIndex];
+        const texto = option ? option.text : 'canal selecionado';
+        destinationLabel.textContent = 'Destino atual: ' + texto;
+        saveButton.textContent = '💾 Salvar em ' + texto.split(' — ')[0];
+      }
+
       function bind(card) {
         card.querySelectorAll('input,textarea').forEach(x => x.addEventListener('input', preview));
         card.querySelector('.remove-option').addEventListener('click', () => {
@@ -305,7 +331,8 @@
         container.appendChild(node); bind(node); reindex(); preview();
       });
       [title,desc,color].forEach(x => x.addEventListener('input', preview));
-      reindex(); preview();
+      if (destination) destination.addEventListener('change', updateDestination);
+      reindex(); preview(); updateDestination();
     })();
   </script>
 </body>
