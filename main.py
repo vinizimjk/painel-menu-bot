@@ -38,6 +38,7 @@ CANAL_TESTE_ID = 1537936115233722388
 # Permissões do /menu deste serviço.
 DONO_ID = 1455937306400653344
 CARGO_DESENVOLVIMENTO_ID = 1533625836874498181
+MAX_BOTOES = 25
 
 DEFAULT_MENU = {
     "titulo": "📋 Menu do Servidor",
@@ -133,10 +134,10 @@ def menu_padrao():
             "titulo": antigo.get("titulo", config["titulo"]),
             "descricao": antigo.get("descricao", config["descricao"]),
             "cor": antigo.get("cor", config["cor"]),
-            "botoes": antigo.get("botoes", config["botoes"])[:3]
+            "botoes": antigo.get("botoes", config["botoes"])[:MAX_BOTOES]
         })
-        while len(config["botoes"]) < 3:
-            config["botoes"].append(deepcopy(DEFAULT_MENU["botoes"][len(config["botoes"])]))
+        if not config["botoes"]:
+            config["botoes"] = deepcopy(DEFAULT_MENU["botoes"])
         return config
 
     return deepcopy(DEFAULT_MENU)
@@ -155,15 +156,16 @@ def normalizar_menu(config):
     botoes_recebidos = config.get("botoes")
     if isinstance(botoes_recebidos, list):
         botoes = []
-        for i in range(3):
-            atual = botoes_recebidos[i] if i < len(botoes_recebidos) and isinstance(botoes_recebidos[i], dict) else {}
-            padrao = DEFAULT_MENU["botoes"][i]
+        for atual in botoes_recebidos[:MAX_BOTOES]:
+            if not isinstance(atual, dict):
+                continue
             botoes.append({
-                "emoji": str(atual.get("emoji") or padrao["emoji"])[:100],
-                "nome": str(atual.get("nome") or padrao["nome"])[:80],
-                "resposta": str(atual.get("resposta") or padrao["resposta"])[:4000]
+                "emoji": str(atual.get("emoji") or "")[:100],
+                "nome": str(atual.get("nome") or "Opção")[:80],
+                "resposta": str(atual.get("resposta") or "Sem conteúdo configurado.")[:4000]
             })
-        base["botoes"] = botoes
+        if botoes:
+            base["botoes"] = botoes
 
     return base
 
@@ -171,22 +173,28 @@ def normalizar_menu(config):
 def config_do_formulario(form):
     titulo = form.get("titulo", "").strip()
     descricao = form.get("descricao", "").strip()
-    cor = form.get("cor", "5865F2").replace("#", "").strip().upper()
+    cor = form.get("cor", "D4AF37").replace("#", "").strip().upper()
 
     if len(cor) != 6:
-        raise ValueError("A cor precisa ter 6 caracteres, por exemplo: 5865F2.")
+        raise ValueError("A cor precisa ter 6 caracteres, por exemplo: D4AF37.")
 
     try:
         int(cor, 16)
     except ValueError as exc:
         raise ValueError("Cor inválida. Use apenas números 0-9 e letras A-F.") from exc
 
+    try:
+        quantidade = int(form.get("quantidade_botoes", "1"))
+    except ValueError:
+        quantidade = 1
+
+    quantidade = max(1, min(quantidade, MAX_BOTOES))
     botoes = []
-    for i in range(3):
+    for i in range(quantidade):
         botoes.append({
             "emoji": form.get(f"emoji_{i}", "").strip()[:100],
-            "nome": form.get(f"nome_{i}", "").strip()[:80],
-            "resposta": form.get(f"resposta_{i}", "").strip()[:4000]
+            "nome": (form.get(f"nome_{i}", "").strip() or f"Opção {i + 1}")[:80],
+            "resposta": (form.get(f"resposta_{i}", "").strip() or "Sem conteúdo configurado.")[:4000]
         })
 
     return {
@@ -233,7 +241,7 @@ class MenuView(discord.ui.View):
     def __init__(self, config, timeout=300):
         super().__init__(timeout=timeout)
 
-        for botao_config in config.get("botoes", [])[:3]:
+        for indice, botao_config in enumerate(config.get("botoes", [])[:MAX_BOTOES]):
             nome = botao_config.get("nome") or "Opção"
             emoji = botao_config.get("emoji") or None
             resposta = botao_config.get("resposta") or "Sem conteúdo configurado."
@@ -241,7 +249,8 @@ class MenuView(discord.ui.View):
             botao = discord.ui.Button(
                 label=nome[:80],
                 emoji=emoji,
-                style=discord.ButtonStyle.primary
+                style=discord.ButtonStyle.primary,
+                row=indice // 5
             )
 
             async def callback(
@@ -509,7 +518,8 @@ def contexto_painel(canal_id=None, config_temporaria=None):
         "canal_atual": canal_atual,
         "menus_configurados": menus_configurados,
         "canal_teste_id": CANAL_TESTE_ID,
-        "bot_conectado": bot.is_ready() if TOKEN else False
+        "bot_conectado": bot.is_ready() if TOKEN else False,
+        "max_botoes": MAX_BOTOES
     }
 
 
@@ -626,7 +636,8 @@ def status():
         "bot_configurado": bool(TOKEN),
         "bot_conectado": bot.is_ready() if TOKEN else False,
         "canal_teste_id": CANAL_TESTE_ID,
-        "menus_configurados": len(dados["menus"])
+        "menus_configurados": len(dados["menus"]),
+        "max_botoes": MAX_BOTOES
     }, 200
 
 

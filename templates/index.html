@@ -3,32 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Central de Menus</title>
+  <title>Resenha Máxima • Central de Configuração</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <header class="topbar">
-    <div>
-      <div class="brand-lockup">
-        <div class="brand-mark">RM</div>
-        <div>
-          <strong>RESENHA MÁXIMA</strong>
-          <span>Central de Configuração • Menus do Discord</span>
-        </div>
-      </div>
-    </div>
+    <div class="brand-lockup"><div class="brand-mark">RM</div><div><strong>RESENHA MÁXIMA</strong><span>Central de Configuração • Menus do Discord</span></div></div>
     <a class="logout" href="{{ url_for('sair') }}">Sair do painel</a>
   </header>
 
   <main class="container wide-container">
-    <section class="hero-panel">
-      <div class="hero-copy">
-        <span class="eyebrow gold">CENTRAL OFICIAL</span>
-        <h1>Resenha Máxima</h1>
-        <p>Gerencie os menus do servidor com a identidade preta e dourada da Resenha.</p>
-      </div>
-      <div class="hero-badge">RM</div>
-    </section>
+    <section class="hero-panel"><div><span class="eyebrow gold">CENTRAL OFICIAL</span><h1>Resenha Máxima</h1><p>Menus por canal, opções dinâmicas, prévia ao vivo e publicação pelo Discord.</p></div><div class="hero-badge">RM</div></section>
     {% with messages = get_flashed_messages() %}
       {% for message in messages %}
         <div class="success">{{ message }}</div>
@@ -87,6 +72,7 @@
     {% if canal_id %}
     <form method="post" id="menu-form">
       <input type="hidden" name="canal_id" value="{{ canal_id }}">
+      <input type="hidden" name="quantidade_botoes" id="quantidade_botoes" value="{{ config.botoes|length }}">
 
       <div class="editor-grid">
         <div class="editor-column">
@@ -119,40 +105,24 @@
             </div>
           </section>
 
+          <div class="options-heading">
+            <div><span class="eyebrow gold">OPÇÕES DO MENU</span><h2>Botões / Seletores</h2><p>Adicione ou remova opções. Limite: {{ max_botoes }}.</p></div>
+            <button type="button" class="add-option" id="add-option">➕ Adicionar opção</button>
+          </div>
+
+          <div id="options-container">
           {% for botao in config.botoes %}
-          <section class="card">
-            <h2>Botão {{ loop.index }}</h2>
-
+          <section class="card option-card">
+            <div class="option-card-head"><h2>Opção <span class="option-number">{{ loop.index }}</span></h2><button type="button" class="remove-option">🗑️ Remover</button></div>
             <div class="two">
-              <div>
-                <label for="emoji_{{ loop.index0 }}">Emoji</label>
-                <input
-                  id="emoji_{{ loop.index0 }}"
-                  name="emoji_{{ loop.index0 }}"
-                  value="{{ botao.emoji }}"
-                  placeholder="⭐"
-                >
-              </div>
-
-              <div>
-                <label for="nome_{{ loop.index0 }}">Nome</label>
-                <input
-                  id="nome_{{ loop.index0 }}"
-                  name="nome_{{ loop.index0 }}"
-                  value="{{ botao.nome }}"
-                  maxlength="80"
-                >
-              </div>
+              <div><label>Emoji</label><input class="emoji-input" name="emoji_{{ loop.index0 }}" value="{{ botao.emoji }}" placeholder="⭐"></div>
+              <div><label>Nome</label><input class="name-input" name="nome_{{ loop.index0 }}" value="{{ botao.nome }}" maxlength="80"></div>
             </div>
-
-            <label for="resposta_{{ loop.index0 }}">Resposta ao clicar</label>
-            <textarea
-              id="resposta_{{ loop.index0 }}"
-              name="resposta_{{ loop.index0 }}"
-              maxlength="4000"
-            >{{ botao.resposta }}</textarea>
+            <label>Resposta ao clicar</label>
+            <textarea class="response-input" name="resposta_{{ loop.index0 }}" maxlength="4000">{{ botao.resposta }}</textarea>
           </section>
           {% endfor %}
+          </div>
         </div>
 
         <aside class="preview-column">
@@ -259,55 +229,83 @@
     {% endif %}
   </main>
 
+  <template id="option-template">
+    <section class="card option-card">
+      <div class="option-card-head"><h2>Opção <span class="option-number">1</span></h2><button type="button" class="remove-option">🗑️ Remover</button></div>
+      <div class="two">
+        <div><label>Emoji</label><input class="emoji-input" placeholder="⭐"></div>
+        <div><label>Nome</label><input class="name-input" value="Nova opção" maxlength="80"></div>
+      </div>
+      <label>Resposta ao clicar</label>
+      <textarea class="response-input" maxlength="4000">Configure a resposta desta opção.</textarea>
+    </section>
+  </template>
+
   <script>
     (() => {
       const form = document.getElementById('menu-form');
       if (!form) return;
+      const MAX = {{ max_botoes }};
+      const container = document.getElementById('options-container');
+      const count = document.getElementById('quantidade_botoes');
+      const add = document.getElementById('add-option');
+      const tpl = document.getElementById('option-template');
+      const title = document.getElementById('titulo');
+      const desc = document.getElementById('descricao');
+      const color = document.getElementById('cor');
+      const pTitle = document.getElementById('preview-title');
+      const pDesc = document.getElementById('preview-description');
+      const pEmbed = document.getElementById('preview-embed');
+      const swatch = document.getElementById('color-swatch');
+      const pButtons = document.getElementById('preview-buttons');
 
-      const titulo = document.getElementById('titulo');
-      const descricao = document.getElementById('descricao');
-      const cor = document.getElementById('cor');
-      const previewTitle = document.getElementById('preview-title');
-      const previewDescription = document.getElementById('preview-description');
-      const previewEmbed = document.getElementById('preview-embed');
-      const colorSwatch = document.getElementById('color-swatch');
+      const cards = () => [...container.querySelectorAll('.option-card')];
+      const normalizeColor = v => /^[0-9A-Fa-f]{6}$/.test((v||'').replace('#','').trim()) ? '#'+v.replace('#','').trim() : '#D4AF37';
 
-      const normalizarCor = (valor) => {
-        const limpa = (valor || '').replace('#', '').trim();
-        return /^[0-9A-Fa-f]{6}$/.test(limpa) ? `#${limpa}` : '#5865F2';
-      };
+      function reindex() {
+        cards().forEach((card,i) => {
+          card.querySelector('.option-number').textContent = i+1;
+          card.querySelector('.emoji-input').name = `emoji_${i}`;
+          card.querySelector('.name-input').name = `nome_${i}`;
+          card.querySelector('.response-input').name = `resposta_${i}`;
+        });
+        count.value = cards().length;
+        add.disabled = cards().length >= MAX;
+      }
 
-      const atualizarPreview = () => {
-        previewTitle.textContent = titulo.value.trim() || 'Menu';
-        previewDescription.textContent = descricao.value.trim() || 'Escolha uma opção.';
+      function preview() {
+        pTitle.textContent = title.value.trim() || 'Menu';
+        pDesc.textContent = desc.value.trim() || 'Escolha uma opção.';
+        const c = normalizeColor(color.value);
+        pEmbed.style.setProperty('--embed-color', c);
+        swatch.style.background = c;
+        pButtons.innerHTML = '';
+        cards().forEach(card => {
+          const b = document.createElement('button');
+          b.type='button'; b.className='discord-button'; b.tabIndex=-1;
+          const em=card.querySelector('.emoji-input').value.trim();
+          const nm=card.querySelector('.name-input').value.trim() || 'Opção';
+          b.textContent = (em ? em+' ' : '') + nm;
+          pButtons.appendChild(b);
+        });
+      }
 
-        const corAtual = normalizarCor(cor.value);
-        previewEmbed.style.setProperty('--embed-color', corAtual);
-        colorSwatch.style.background = corAtual;
+      function bind(card) {
+        card.querySelectorAll('input,textarea').forEach(x => x.addEventListener('input', preview));
+        card.querySelector('.remove-option').addEventListener('click', () => {
+          if (cards().length <= 1) return alert('O menu precisa ter pelo menos uma opção.');
+          card.remove(); reindex(); preview();
+        });
+      }
 
-        const botoes = document.querySelectorAll('.discord-button');
-
-        for (let i = 0; i < 3; i++) {
-          const emojiInput = document.getElementById(`emoji_${i}`);
-          const nomeInput = document.getElementById(`nome_${i}`);
-          const button = botoes[i];
-
-          if (!button || !emojiInput || !nomeInput) continue;
-
-          const emoji = button.querySelector('.preview-button-emoji');
-          const nome = button.querySelector('.preview-button-name');
-
-          emoji.textContent = emojiInput.value.trim();
-          emoji.style.display = emojiInput.value.trim() ? '' : 'none';
-          nome.textContent = nomeInput.value.trim() || 'Opção';
-        }
-      };
-
-      form.querySelectorAll('input, textarea').forEach((campo) => {
-        campo.addEventListener('input', atualizarPreview);
+      cards().forEach(bind);
+      add.addEventListener('click', () => {
+        if (cards().length >= MAX) return;
+        const node = tpl.content.firstElementChild.cloneNode(true);
+        container.appendChild(node); bind(node); reindex(); preview();
       });
-
-      atualizarPreview();
+      [title,desc,color].forEach(x => x.addEventListener('input', preview));
+      reindex(); preview();
     })();
   </script>
 </body>

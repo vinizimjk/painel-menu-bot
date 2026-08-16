@@ -434,3 +434,7 @@ button {
   .discord-message { gap: 9px; }
   .bot-avatar { width: 34px; height: 34px; flex-basis: 34px; }
 }
+
+
+/* Opções dinâmicas */
+.options-heading,.option-card-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.options-heading{margin:24px 0 12px}.options-heading h2{margin:4px 0}.options-heading p{margin:0;color:var(--muted);font-size:13px}.option-card-head h2{margin:0}.add-option{white-space:nowrap}.remove-option{padding:8px 11px;color:#ffb7b7;background:rgba(184,58,58,.09);border:1px solid rgba(184,58,58,.4);box-shadow:none;font-size:12px}.remove-option:hover{filter:brightness(1.08)}@media(max-width:650px){.options-heading{align-items:stretch;flex-direction:column}.add-option{width:100%}}
