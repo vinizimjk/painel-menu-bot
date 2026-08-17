@@ -679,3 +679,84 @@ button {
     text-align: center;
   }
 }
+
+
+/* Atualização: logo oficial, mensagens e central */
+.brand-image {
+  object-fit: cover;
+  object-position: center;
+  overflow: hidden;
+  padding: 0;
+}
+img.brand-mark, img.hero-badge, img.bot-avatar {
+  display: block;
+  color: transparent;
+  background: #080808;
+}
+img.brand-mark { width: 46px; height: 46px; }
+img.hero-badge { width: 100px; height: 100px; flex: 0 0 100px; }
+img.bot-avatar { width: 42px; height: 42px; flex: 0 0 42px; }
+
+.login-logo {
+  display: block;
+  width: 132px;
+  height: 132px;
+  margin: 0 auto 20px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 2px solid #e6c453;
+  box-shadow: 0 0 0 5px rgba(212,175,55,.08), 0 18px 45px rgba(0,0,0,.45);
+}
+.login-title { text-align: center; margin-bottom: 20px; }
+.login-title h1 { margin: 6px 0 8px; }
+.login-help {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid #2d2920;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.model-head, .admin-log-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.model-destination {
+  color: #bcb29f;
+  font-size: 11px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #202020;
+  border: 1px solid #343027;
+}
+.message-preview-text {
+  margin: 12px 0 14px;
+  padding: 14px;
+  color: #e6e1d7;
+  background: #171717;
+  border: 1px solid #2e2a22;
+  border-left: 3px solid var(--gold);
+  border-radius: 8px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.admin-log-meta { margin-bottom: 8px; }
+.admin-log-meta span {
+  color: #e9ce70;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.admin-log-text { white-space: pre-wrap; line-height: 1.5; }
+
+@media (max-width: 650px) {
+  img.brand-mark { width: 44px; height: 44px; }
+  img.hero-badge { width: 72px; height: 72px; flex-basis: 72px; }
+  img.bot-avatar { width: 36px; height: 36px; flex-basis: 36px; }
+  .login-logo { width: 112px; height: 112px; }
+}

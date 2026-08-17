@@ -502,6 +502,7 @@ app = Flask(__name__)
 app.secret_key = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
 
 USERS_FILE = DATA_DIR / "panel_users.json"
+ADMIN_LOG_FILE = DATA_DIR / "admin_logs.json"
 
 # Equipe de Desenvolvimento já definida acima:
 # CARGO_DESENVOLVIMENTO_ID = 1533625836874498181
@@ -517,58 +518,89 @@ _users_lock = threading.Lock()
 MODELOS_MENSAGENS = [
     {
         "categoria": "Minecraft",
-        "titulo": "Status do servidor",
-        "descricao": "Mensagem única no canal de status exibindo 🟢 Online ou 🔴 Offline."
-    },
-    {
-        "categoria": "Minecraft",
         "titulo": "Solicitação de nickname",
-        "descricao": "DM pedindo o nickname do Minecraft para membros com o cargo correspondente."
+        "destino": "DM do membro",
+        "conteudo": (
+            "🎮 Cadastro do Minecraft\n\n"
+            "Precisamos do seu nickname do Minecraft para concluir seu cadastro.\n"
+            "Responda esta mensagem com o nickname que você usa no servidor."
+        ),
     },
     {
         "categoria": "Minecraft",
-        "titulo": "Nickname inválido",
-        "descricao": "Resposta descontraída quando o nickname informado não passa pela validação básica."
+        "titulo": "Nickname pendente",
+        "destino": "DM do membro",
+        "conteudo": (
+            "⚠️ Seu nickname do Minecraft ainda está pendente.\n\n"
+            "Envie seu nickname para concluir o cadastro. "
+            "O sistema pode enviar até 4 avisos dentro de 48 horas."
+        ),
     },
     {
         "categoria": "Minecraft",
         "titulo": "DM fechada",
-        "descricao": "Menção no chat geral pedindo para o membro abrir a DM para concluir o cadastro."
+        "destino": "Canal do servidor",
+        "conteudo": (
+            "📩 Não consegui enviar uma mensagem no seu privado.\n"
+            "Abra suas DMs para que o cadastro do nickname possa continuar."
+        ),
     },
     {
         "categoria": "Minecraft",
         "titulo": "Nickname cadastrado",
-        "descricao": "Confirmação enviada ao membro quando o nickname é cadastrado."
+        "destino": "DM do membro",
+        "conteudo": (
+            "✅ Nickname cadastrado com sucesso.\n\n"
+            "Seu nickname foi adicionado à tabela do Minecraft."
+        ),
     },
     {
         "categoria": "Minecraft",
-        "titulo": "Tabela de nicknames",
-        "descricao": "Mensagem única que reúne @membro — nickname e é editada automaticamente."
+        "titulo": "Status Online",
+        "destino": "Canal de status",
+        "conteudo": (
+            "🟢 SERVIDOR MINECRAFT ONLINE\n\n"
+            "O servidor da Resenha Máxima está disponível agora."
+        ),
+    },
+    {
+        "categoria": "Minecraft",
+        "titulo": "Status Offline",
+        "destino": "Canal de status",
+        "conteudo": (
+            "🔴 SERVIDOR MINECRAFT OFFLINE\n\n"
+            "O servidor da Resenha Máxima está offline no momento."
+        ),
     },
     {
         "categoria": "Moderação",
         "titulo": "Solicitação de Ban / Hackban",
-        "descricao": "Embed de solicitação com motivo, solicitante e fluxo de aprovação ou negação."
-    },
-    {
-        "categoria": "Moderação",
-        "titulo": "Resultado de Ban",
-        "descricao": "Mensagem de solicitação atualizada quando o ban é aprovado ou negado."
-    },
-    {
-        "categoria": "Administração",
-        "titulo": "Logs administrativos",
-        "descricao": "Embeds enviados ao programador com cadastros, alertas, castigos e ações administrativas."
+        "destino": "Canal de aprovação",
+        "conteudo": (
+            "⚠️ Solicitação de Ban / Hackban\n\n"
+            "Exibe usuário, ID, solicitante, motivo e status da solicitação "
+            "com os controles de aprovação e negação."
+        ),
     },
     {
         "categoria": "Administração",
-        "titulo": "Limpeza do canal de comandos",
-        "descricao": "Registro da limpeza automática à meia-noite e das limpezas manuais."
+        "titulo": "Canal limpo",
+        "destino": "Canal de comandos",
+        "conteudo": (
+            "🧹 Este canal foi limpo.\n"
+            "Essa ação foi feita para evitar acúmulo de mensagens.\n\n"
+            "Este aviso desaparece automaticamente após 3 novas mensagens."
+        ),
     },
     {
         "categoria": "Bot",
-        "titulo": "Para que eu sirvo?",
-        "descricao": "Ficha oficial do bot com funções atuais, última atualização e funções removidas."
+        "titulo": "Funções do Bot",
+        "destino": "Canal de funções",
+        "conteudo": (
+            "🤖 Funções do Bot\n\n"
+            "Apresentação oficial com funções atuais, última atualização "
+            "e histórico de funções removidas."
+        ),
     },
 ]
 
@@ -917,96 +949,31 @@ def sair():
     return redirect(url_for("login"))
 
 
-async def buscar_dm_administrativa():
-    if bot.user is None:
+def carregar_logs_administrativos():
+    """Carrega a central própria do painel sem consultar a DM."""
+    if not ADMIN_LOG_FILE.exists():
         return []
 
     try:
-        dono = bot.get_user(DONO_ID)
-
-        if dono is None:
-            dono = await bot.fetch_user(DONO_ID)
-
-        canal = dono.dm_channel
-
-        if canal is None:
-            canal = await dono.create_dm()
-
-        registros = []
-
-        async for mensagem in canal.history(
-            limit=100,
-            oldest_first=False
-        ):
-            if mensagem.author.id != bot.user.id:
-                continue
-
-            partes = []
-
-            if mensagem.content:
-                partes.append(mensagem.content)
-
-            for embed in mensagem.embeds:
-                if embed.title:
-                    partes.append(f"**{embed.title}**")
-
-                if embed.description:
-                    partes.append(embed.description)
-
-                for campo in embed.fields:
-                    partes.append(
-                        f"**{campo.name}:** {campo.value}"
-                    )
-
-                if embed.footer and embed.footer.text:
-                    partes.append(
-                        f"_Rodapé: {embed.footer.text}_"
-                    )
-
-            texto = "\n".join(partes).strip()
-
-            if not texto:
-                texto = "(mensagem sem texto)"
-
-            registros.append({
-                "id": str(mensagem.id),
-                "data": mensagem.created_at.strftime(
-                    "%d/%m/%Y %H:%M"
-                ),
-                "texto": texto,
-            })
-
-        return registros
-
-    except (
-        discord.Forbidden,
-        discord.HTTPException,
-        discord.NotFound
-    ) as erro:
-        print(
-            "Não consegui carregar a DM administrativa: "
-            f"{erro}"
-        )
+        with ADMIN_LOG_FILE.open("r", encoding="utf-8") as arquivo:
+            dados = json.load(arquivo)
+    except (OSError, json.JSONDecodeError):
         return []
 
-
-def buscar_dm_administrativa_sync():
-    if not bot.is_ready() or BOT_LOOP is None:
+    if not isinstance(dados, list):
         return []
 
-    try:
-        futuro = asyncio.run_coroutine_threadsafe(
-            buscar_dm_administrativa(),
-            BOT_LOOP
-        )
-        return futuro.result(timeout=15)
+    registros = []
+    for item in dados[-100:]:
+        if not isinstance(item, dict):
+            continue
+        registros.append({
+            "data": str(item.get("data", "")),
+            "tipo": str(item.get("tipo", "Sistema")),
+            "texto": str(item.get("texto", "")),
+        })
 
-    except Exception as erro:
-        print(
-            "Erro ao buscar DM administrativa: "
-            f"{erro}"
-        )
-        return []
+    return list(reversed(registros))
 
 
 def contexto_painel(
@@ -1158,8 +1125,8 @@ def contexto_painel(
             ].casefold()
         )
 
-    logs_dm = (
-        buscar_dm_administrativa_sync()
+    logs_admin = (
+        carregar_logs_administrativos()
         if aba == "central"
         and acesso_total()
         else []
@@ -1189,7 +1156,7 @@ def contexto_painel(
             "discord_nome"
         ),
         "modelos_mensagens": MODELOS_MENSAGENS,
-        "logs_dm": logs_dm,
+        "logs_admin": logs_admin,
         "usuarios_painel": usuarios,
         "cargo_eventos_configurado": bool(
             CARGO_EVENTOS_ID

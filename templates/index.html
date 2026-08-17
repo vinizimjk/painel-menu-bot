@@ -9,7 +9,9 @@
 <body>
   <header class="topbar">
     <div class="brand-lockup">
-      <div class="brand-mark">RM</div>
+      <img class="brand-mark brand-image"
+src="{{ url_for('static', filename='logo_resenha_maxima.png') }}"
+alt="Logo Resenha Máxima">
       <div>
         <strong>RESENHA MÁXIMA</strong>
         <span>Central de Configuração</span>
@@ -34,7 +36,9 @@
           Menus do Discord, modelos de mensagens e central administrativa.
         </p>
       </div>
-      <div class="hero-badge">RM</div>
+      <img class="hero-badge brand-image"
+src="{{ url_for('static', filename='logo_resenha_maxima.png') }}"
+alt="Logo Resenha Máxima">
     </section>
 
     <nav class="panel-tabs">
@@ -256,7 +260,9 @@
 
               <div class="discord-stage">
                 <div class="discord-message">
-                  <div class="bot-avatar">RM</div>
+                  <img class="bot-avatar brand-image"
+src="{{ url_for('static', filename='logo_resenha_maxima.png') }}"
+alt="Avatar Resenha Máxima">
 
                   <div class="discord-content">
                     <div class="discord-author-row">
@@ -365,9 +371,12 @@
         <div class="message-model-grid">
           {% for modelo in modelos_mensagens %}
             <article class="message-model-card">
-              <span class="model-category">{{ modelo.categoria }}</span>
+              <div class="model-head">
+                <span class="model-category">{{ modelo.categoria }}</span>
+                <span class="model-destination">{{ modelo.destino }}</span>
+              </div>
               <h3>{{ modelo.titulo }}</h3>
-              <p>{{ modelo.descricao }}</p>
+              <div class="message-preview-text">{{ modelo.conteudo }}</div>
               <span class="readonly-pill">🔒 Somente leitura</span>
             </article>
           {% endfor %}
@@ -379,10 +388,10 @@
         <section class="card">
           <div class="section-heading">
             <div>
-              <span class="eyebrow gold">DM ADMINISTRATIVA</span>
+              <span class="eyebrow gold">REGISTROS DO BOT</span>
               <h2>🛡️ Central Administrativa</h2>
               <p>
-                Últimas mensagens que o bot enviou para sua DM.
+                Registros administrativos do bot aparecem aqui, sem enviar cópias para sua DM.
               </p>
             </div>
 
@@ -395,17 +404,20 @@
           </div>
 
           <div class="admin-log-list">
-            {% if logs_dm %}
-              {% for log in logs_dm %}
+            {% if logs_admin %}
+              {% for log in logs_admin %}
                 <article class="admin-log-item">
-                  <time>{{ log.data }}</time>
-                  <div>{{ log.texto }}</div>
+                  <div class="admin-log-meta">
+                    <time>{{ log.data }}</time>
+                    <span>{{ log.tipo }}</span>
+                  </div>
+                  <div class="admin-log-text">{{ log.texto }}</div>
                 </article>
               {% endfor %}
             {% else %}
               <div class="empty-state">
-                Nenhum registro de DM foi carregado.
-                Se o bot acabou de iniciar, atualize esta aba em alguns segundos.
+                Nenhum registro administrativo ainda.
+                Esta área não consulta mais sua DM.
               </div>
             {% endif %}
           </div>
@@ -415,7 +427,7 @@
           <span class="eyebrow gold">CONTAS DO PAINEL</span>
           <h2>👥 Criar usuário</h2>
           <p class="muted">
-            O ID é verificado no Discord antes da conta ser criada.
+            Crie a conta aqui. O ID do Discord é verificado antes de liberar o acesso.
           </p>
 
           <form

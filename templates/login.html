@@ -3,46 +3,46 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Resenha Máxima • Login</title>
+  <title>Entrar • Resenha Máxima</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   <main class="login-wrap">
     <section class="login-card">
-      <div class="brand-mark login-brand">RM</div>
-      <span class="eyebrow gold">CENTRAL OFICIAL</span>
-      <h1>Resenha Máxima</h1>
-      <p>
-        Entre com sua conta do painel. O administrador principal
-        também pode continuar usando somente a senha mestre.
-      </p>
+      <img class="login-logo"
+           src="{{ url_for('static', filename='logo_resenha_maxima.png') }}"
+           alt="Logo Resenha Máxima">
+
+      <div class="login-title">
+        <span class="eyebrow gold">CENTRAL DE CONFIGURAÇÃO</span>
+        <h1>Resenha Máxima</h1>
+        <p>Entre com sua conta do painel ou use a senha mestre.</p>
+      </div>
 
       {% with messages = get_flashed_messages() %}
         {% for message in messages %}
-          <div class="success">{{ message }}</div>
+          <div class="alert">{{ message }}</div>
         {% endfor %}
       {% endwith %}
 
       <form method="post">
-        <label>Usuário</label>
-        <input
-          name="usuario"
-          placeholder="Opcional para acesso mestre"
-          autocomplete="username"
-        >
+        <label for="usuario">Usuário</label>
+        <input id="usuario" name="usuario"
+               autocomplete="username"
+               placeholder="Seu usuário">
 
-        <label>Senha</label>
-        <input
-          name="senha"
-          type="password"
-          required
-          autocomplete="current-password"
-        >
+        <label for="senha">Senha</label>
+        <input id="senha" name="senha" type="password"
+               autocomplete="current-password"
+               required placeholder="Sua senha">
 
-        <button type="submit">
-          Entrar no painel
-        </button>
+        <button type="submit">Entrar no painel</button>
       </form>
+
+      <p class="login-help">
+        Novas contas são criadas por um administrador
+        dentro da Central Administrativa.
+      </p>
     </section>
   </main>
 </body>
