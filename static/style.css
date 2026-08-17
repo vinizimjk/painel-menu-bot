@@ -438,3 +438,244 @@ button {
 
 /* Opções dinâmicas */
 .options-heading,.option-card-head{display:flex;align-items:center;justify-content:space-between;gap:16px}.options-heading{margin:24px 0 12px}.options-heading h2{margin:4px 0}.options-heading p{margin:0;color:var(--muted);font-size:13px}.option-card-head h2{margin:0}.add-option{white-space:nowrap}.remove-option{padding:8px 11px;color:#ffb7b7;background:rgba(184,58,58,.09);border:1px solid rgba(184,58,58,.4);box-shadow:none;font-size:12px}.remove-option:hover{filter:brightness(1.08)}@media(max-width:650px){.options-heading{align-items:stretch;flex-direction:column}.add-option{width:100%}}
+
+
+/* =========================================================
+   CENTRAL V2 — ABAS, USUÁRIOS E ADMINISTRAÇÃO
+   ========================================================= */
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar-user > span,
+.topbar-user > small {
+  color: var(--muted);
+}
+
+.topbar-user > small {
+  font-size: 11px;
+}
+
+.panel-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 18px;
+  padding: 8px;
+  background: rgba(14,14,14,.94);
+  border: 1px solid rgba(212,175,55,.24);
+  border-radius: 14px;
+}
+
+.panel-tab {
+  padding: 10px 14px;
+  color: var(--muted);
+  text-decoration: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-weight: 800;
+}
+
+.panel-tab:hover {
+  color: var(--gold-light);
+  background: rgba(212,175,55,.05);
+}
+
+.panel-tab.active {
+  color: #f8e6a0;
+  background: rgba(212,175,55,.12);
+  border-color: rgba(212,175,55,.38);
+}
+
+.permission-banner,
+.setup-note {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  color: #f0d991;
+  background: rgba(212,175,55,.08);
+  border: 1px solid rgba(212,175,55,.28);
+  border-radius: 10px;
+}
+
+.message-model-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(250px, 1fr)
+  );
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.message-model-card {
+  padding: 16px;
+  background: #171717;
+  border: 1px solid #2e291d;
+  border-radius: 12px;
+}
+
+.message-model-card h3 {
+  margin: 8px 0;
+  color: #f0dda0;
+}
+
+.message-model-card p {
+  margin: 0 0 14px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.model-category,
+.readonly-pill {
+  display: inline-flex;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.model-category {
+  color: var(--gold-light);
+  background: rgba(212,175,55,.09);
+}
+
+.readonly-pill {
+  color: #b9b3a6;
+  background: #232323;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.admin-log-list {
+  display: grid;
+  gap: 10px;
+  max-height: 680px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.admin-log-item {
+  padding: 14px;
+  background: #171717;
+  border: 1px solid #2c2922;
+  border-radius: 10px;
+}
+
+.admin-log-item time {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.admin-log-item div {
+  color: #ded8ca;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.secondary-link {
+  padding: 8px 10px;
+  color: #f0dc99;
+  text-decoration: none;
+  background: #18150e;
+  border: 1px solid rgba(212,175,55,.32);
+  border-radius: 8px;
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.user-create-form {
+  margin-top: 12px;
+}
+
+.permission-explain {
+  margin: 18px 0;
+  padding: 12px;
+  background: #171717;
+  border: 1px solid #2c2922;
+  border-radius: 10px;
+}
+
+.permission-explain p {
+  margin: 7px 0 0;
+  color: var(--muted);
+}
+
+.subheading {
+  color: #efd98f;
+  margin: 20px 0 10px;
+}
+
+.panel-users-list {
+  display: grid;
+  gap: 8px;
+}
+
+.panel-user-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  background: #171717;
+  border: 1px solid #2c2922;
+  border-radius: 9px;
+}
+
+.panel-user-item > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.panel-user-item strong {
+  color: #efe0ab;
+}
+
+.panel-user-item small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.compact-button {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.login-brand {
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 12px;
+}
+
+@media (max-width: 980px) {
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .topbar-user > span,
+  .topbar-user > small {
+    display: none;
+  }
+
+  .panel-tabs {
+    display: grid;
+  }
+
+  .panel-tab {
+    text-align: center;
+  }
+}

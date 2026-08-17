@@ -10,6 +10,7 @@ from functools import wraps
 import discord
 from discord.ext import commands
 from flask import Flask, render_template, request, redirect, url_for, session, flash
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # =========================================================
 # CONFIGURAÇÕES DO SITE
@@ -492,6 +493,7 @@ def iniciar_bot():
     bot.run(TOKEN, log_handler=None)
 
 
+
 # =========================================================
 # SITE / PAINEL WEB
 # =========================================================
@@ -499,25 +501,412 @@ def iniciar_bot():
 app = Flask(__name__)
 app.secret_key = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
 
+USERS_FILE = DATA_DIR / "panel_users.json"
+
+# Equipe de Desenvolvimento já definida acima:
+# CARGO_DESENVOLVIMENTO_ID = 1533625836874498181
+#
+# Para o Departamento de Eventos e canal de Eventos, você pode
+# definir os IDs diretamente na Railway. Se não definir, o painel
+# tenta localizar pelo nome no Discord.
+CARGO_EVENTOS_ID = int(os.getenv("CARGO_EVENTOS_ID", "0") or "0")
+CANAL_EVENTOS_ID = int(os.getenv("CANAL_EVENTOS_ID", "0") or "0")
+
+_users_lock = threading.Lock()
+
+MODELOS_MENSAGENS = [
+    {
+        "categoria": "Minecraft",
+        "titulo": "Status do servidor",
+        "descricao": "Mensagem única no canal de status exibindo 🟢 Online ou 🔴 Offline."
+    },
+    {
+        "categoria": "Minecraft",
+        "titulo": "Solicitação de nickname",
+        "descricao": "DM pedindo o nickname do Minecraft para membros com o cargo correspondente."
+    },
+    {
+        "categoria": "Minecraft",
+        "titulo": "Nickname inválido",
+        "descricao": "Resposta descontraída quando o nickname informado não passa pela validação básica."
+    },
+    {
+        "categoria": "Minecraft",
+        "titulo": "DM fechada",
+        "descricao": "Menção no chat geral pedindo para o membro abrir a DM para concluir o cadastro."
+    },
+    {
+        "categoria": "Minecraft",
+        "titulo": "Nickname cadastrado",
+        "descricao": "Confirmação enviada ao membro quando o nickname é cadastrado."
+    },
+    {
+        "categoria": "Minecraft",
+        "titulo": "Tabela de nicknames",
+        "descricao": "Mensagem única que reúne @membro — nickname e é editada automaticamente."
+    },
+    {
+        "categoria": "Moderação",
+        "titulo": "Solicitação de Ban / Hackban",
+        "descricao": "Embed de solicitação com motivo, solicitante e fluxo de aprovação ou negação."
+    },
+    {
+        "categoria": "Moderação",
+        "titulo": "Resultado de Ban",
+        "descricao": "Mensagem de solicitação atualizada quando o ban é aprovado ou negado."
+    },
+    {
+        "categoria": "Administração",
+        "titulo": "Logs administrativos",
+        "descricao": "Embeds enviados ao programador com cadastros, alertas, castigos e ações administrativas."
+    },
+    {
+        "categoria": "Administração",
+        "titulo": "Limpeza do canal de comandos",
+        "descricao": "Registro da limpeza automática à meia-noite e das limpezas manuais."
+    },
+    {
+        "categoria": "Bot",
+        "titulo": "Para que eu sirvo?",
+        "descricao": "Ficha oficial do bot com funções atuais, última atualização e funções removidas."
+    },
+]
+
+
+def usuarios_vazios():
+    return {"versao": 1, "usuarios": {}}
+
+
+def carregar_usuarios():
+    with _users_lock:
+        if not USERS_FILE.exists():
+            salvar_usuarios_sem_lock(usuarios_vazios())
+
+        try:
+            with USERS_FILE.open("r", encoding="utf-8") as arquivo:
+                dados = json.load(arquivo)
+        except (OSError, json.JSONDecodeError):
+            dados = usuarios_vazios()
+            salvar_usuarios_sem_lock(dados)
+
+        if not isinstance(dados, dict):
+            dados = usuarios_vazios()
+
+        if not isinstance(dados.get("usuarios"), dict):
+            dados["usuarios"] = {}
+
+        return dados
+
+
+def salvar_usuarios_sem_lock(dados):
+    temporario = USERS_FILE.with_suffix(".tmp")
+
+    with temporario.open("w", encoding="utf-8") as arquivo:
+        json.dump(
+            dados,
+            arquivo,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    temporario.replace(USERS_FILE)
+
+
+def salvar_usuarios(dados):
+    with _users_lock:
+        salvar_usuarios_sem_lock(dados)
+
+
+def normalizar_nome_cargo(nome):
+    return (
+        str(nome or "")
+        .strip()
+        .casefold()
+        .replace("-", " ")
+        .replace("_", " ")
+    )
+
+
+def obter_guild_painel():
+    guild = None
+
+    if GUILD_ID:
+        try:
+            guild = bot.get_guild(int(GUILD_ID))
+        except ValueError:
+            guild = None
+
+    if guild is None and bot.guilds:
+        guild = bot.guilds[0]
+
+    return guild
+
+
+async def verificar_permissao_discord(discord_id):
+    guild = obter_guild_painel()
+
+    if guild is None:
+        return {
+            "ok": False,
+            "nivel": None,
+            "nome": None,
+            "erro": "O bot do painel ainda não está conectado ao servidor."
+        }
+
+    try:
+        discord_id = int(discord_id)
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "nivel": None,
+            "nome": None,
+            "erro": "ID do Discord inválido."
+        }
+
+    membro = guild.get_member(discord_id)
+
+    if membro is None:
+        try:
+            membro = await guild.fetch_member(discord_id)
+        except (
+            discord.NotFound,
+            discord.Forbidden,
+            discord.HTTPException
+        ):
+            return {
+                "ok": False,
+                "nivel": None,
+                "nome": None,
+                "erro": "Esse usuário não foi encontrado no servidor."
+            }
+
+    if membro.id == DONO_ID:
+        return {
+            "ok": True,
+            "nivel": "full",
+            "nome": str(membro),
+            "erro": None
+        }
+
+    ids_cargos = {
+        cargo.id
+        for cargo in membro.roles
+    }
+
+    if CARGO_DESENVOLVIMENTO_ID in ids_cargos:
+        return {
+            "ok": True,
+            "nivel": "full",
+            "nome": str(membro),
+            "erro": None
+        }
+
+    cargo_eventos_encontrado = False
+
+    if CARGO_EVENTOS_ID:
+        cargo_eventos_encontrado = (
+            CARGO_EVENTOS_ID in ids_cargos
+        )
+    else:
+        for cargo in membro.roles:
+            nome = normalizar_nome_cargo(cargo.name)
+
+            if nome in {
+                "departamento de eventos",
+                "departamento eventos",
+                "equipe de eventos",
+                "eventos"
+            }:
+                cargo_eventos_encontrado = True
+                break
+
+    if cargo_eventos_encontrado:
+        return {
+            "ok": True,
+            "nivel": "eventos",
+            "nome": str(membro),
+            "erro": None
+        }
+
+    return {
+        "ok": False,
+        "nivel": None,
+        "nome": str(membro),
+        "erro": (
+            "O usuário não possui o cargo Equipe de Desenvolvimento "
+            "nem Departamento de Eventos."
+        )
+    }
+
+
+def verificar_permissao_discord_sync(discord_id):
+    if not bot.is_ready() or BOT_LOOP is None:
+        return {
+            "ok": False,
+            "nivel": None,
+            "nome": None,
+            "erro": "O bot do painel ainda não está conectado ao Discord."
+        }
+
+    try:
+        futuro = asyncio.run_coroutine_threadsafe(
+            verificar_permissao_discord(discord_id),
+            BOT_LOOP
+        )
+        return futuro.result(timeout=12)
+
+    except Exception as erro:
+        return {
+            "ok": False,
+            "nivel": None,
+            "nome": None,
+            "erro": f"Falha ao verificar o Discord: {erro}"
+        }
+
+
+def canal_eventos_id(canais=None):
+    if CANAL_EVENTOS_ID:
+        return str(CANAL_EVENTOS_ID)
+
+    canais = canais or obter_canais_texto_sync()
+
+    nomes_exatos = {
+        "eventos",
+        "evento",
+        "departamento-de-eventos",
+        "departamento de eventos",
+    }
+
+    for canal in canais:
+        nome = str(canal.get("nome", "")).casefold()
+
+        if nome in nomes_exatos:
+            return canal["id"]
+
+    return None
+
+
+def nivel_sessao():
+    return session.get("nivel")
+
+
+def acesso_total():
+    return nivel_sessao() == "full"
+
+
+def canal_permitido_para_sessao(canal_id, canais=None):
+    if acesso_total():
+        return True
+
+    if nivel_sessao() != "eventos":
+        return False
+
+    eventos_id = canal_eventos_id(canais)
+
+    return (
+        eventos_id is not None
+        and str(canal_id) == str(eventos_id)
+    )
+
+
+def filtrar_canais_por_permissao(canais):
+    if acesso_total():
+        return canais
+
+    if nivel_sessao() == "eventos":
+        eventos_id = canal_eventos_id(canais)
+
+        if eventos_id is None:
+            return []
+
+        return [
+            canal
+            for canal in canais
+            if canal["id"] == eventos_id
+        ]
+
+    return []
+
 
 def login_obrigatorio(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         if not session.get("logado"):
             return redirect(url_for("login"))
+
         return func(*args, **kwargs)
+
+    return wrapper
+
+
+def somente_full(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not session.get("logado"):
+            return redirect(url_for("login"))
+
+        if not acesso_total():
+            flash("❌ Você não possui acesso a esta área.")
+            return redirect(url_for("painel"))
+
+        return func(*args, **kwargs)
+
     return wrapper
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        usuario = request.form.get("usuario", "").strip()
         senha = request.form.get("senha", "")
+
+        # Login mestre antigo continua funcionando.
         if secrets.compare_digest(senha, PANEL_PASSWORD):
+            session.clear()
             session["logado"] = True
+            session["usuario"] = "Administrador principal"
+            session["nivel"] = "full"
+            session["discord_id"] = str(DONO_ID)
+            session["login_mestre"] = True
+
             return redirect(url_for("painel"))
 
-        flash("Senha incorreta.")
+        dados = carregar_usuarios()
+        registro = dados["usuarios"].get(
+            usuario.casefold()
+        )
+
+        if (
+            registro
+            and check_password_hash(
+                registro.get("senha_hash", ""),
+                senha
+            )
+        ):
+            permissao = verificar_permissao_discord_sync(
+                registro.get("discord_id")
+            )
+
+            if not permissao["ok"]:
+                flash(
+                    "❌ Sua conta existe, mas o acesso do Discord "
+                    f"não pôde ser validado: {permissao['erro']}"
+                )
+                return render_template("login.html")
+
+            session.clear()
+            session["logado"] = True
+            session["usuario"] = usuario
+            session["discord_id"] = str(
+                registro.get("discord_id")
+            )
+            session["discord_nome"] = permissao.get("nome")
+            session["nivel"] = permissao["nivel"]
+            session["login_mestre"] = False
+
+            return redirect(url_for("painel"))
+
+        flash("❌ Usuário ou senha incorretos.")
 
     return render_template("login.html")
 
@@ -528,20 +917,148 @@ def sair():
     return redirect(url_for("login"))
 
 
-def contexto_painel(canal_id=None, config_temporaria=None):
-    dados = carregar_menus()
-    canais = obter_canais_texto_sync()
+async def buscar_dm_administrativa():
+    if bot.user is None:
+        return []
 
-    ids_validos = {canal["id"] for canal in canais}
+    try:
+        dono = bot.get_user(DONO_ID)
+
+        if dono is None:
+            dono = await bot.fetch_user(DONO_ID)
+
+        canal = dono.dm_channel
+
+        if canal is None:
+            canal = await dono.create_dm()
+
+        registros = []
+
+        async for mensagem in canal.history(
+            limit=100,
+            oldest_first=False
+        ):
+            if mensagem.author.id != bot.user.id:
+                continue
+
+            partes = []
+
+            if mensagem.content:
+                partes.append(mensagem.content)
+
+            for embed in mensagem.embeds:
+                if embed.title:
+                    partes.append(f"**{embed.title}**")
+
+                if embed.description:
+                    partes.append(embed.description)
+
+                for campo in embed.fields:
+                    partes.append(
+                        f"**{campo.name}:** {campo.value}"
+                    )
+
+                if embed.footer and embed.footer.text:
+                    partes.append(
+                        f"_Rodapé: {embed.footer.text}_"
+                    )
+
+            texto = "\n".join(partes).strip()
+
+            if not texto:
+                texto = "(mensagem sem texto)"
+
+            registros.append({
+                "id": str(mensagem.id),
+                "data": mensagem.created_at.strftime(
+                    "%d/%m/%Y %H:%M"
+                ),
+                "texto": texto,
+            })
+
+        return registros
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException,
+        discord.NotFound
+    ) as erro:
+        print(
+            "Não consegui carregar a DM administrativa: "
+            f"{erro}"
+        )
+        return []
+
+
+def buscar_dm_administrativa_sync():
+    if not bot.is_ready() or BOT_LOOP is None:
+        return []
+
+    try:
+        futuro = asyncio.run_coroutine_threadsafe(
+            buscar_dm_administrativa(),
+            BOT_LOOP
+        )
+        return futuro.result(timeout=15)
+
+    except Exception as erro:
+        print(
+            "Erro ao buscar DM administrativa: "
+            f"{erro}"
+        )
+        return []
+
+
+def contexto_painel(
+    canal_id=None,
+    config_temporaria=None,
+    aba="menus"
+):
+    dados = carregar_menus()
+    canais_todos = obter_canais_texto_sync()
+    canais = filtrar_canais_por_permissao(
+        canais_todos
+    )
+
+    if nivel_sessao() == "eventos":
+        aba = "menus"
+
+    abas_validas = {
+        "menus",
+        "modelos",
+        "central",
+    }
+
+    if aba not in abas_validas:
+        aba = "menus"
+
+    if (
+        aba in {"modelos", "central"}
+        and not acesso_total()
+    ):
+        aba = "menus"
+
+    ids_validos = {
+        canal["id"]
+        for canal in canais
+    }
 
     if canal_id is not None:
         canal_id = str(canal_id)
 
+    if (
+        canal_id
+        and canal_id not in ids_validos
+    ):
+        canal_id = None
+
     if not canal_id:
-        configurados = list(dados["menus"].keys())
+        configurados = list(
+            dados["menus"].keys()
+        )
 
         for configurado in configurados:
-            if not ids_validos or configurado in ids_validos:
+            if configurado in ids_validos:
                 canal_id = configurado
                 break
 
@@ -549,110 +1066,304 @@ def contexto_painel(canal_id=None, config_temporaria=None):
         canal_id = canais[0]["id"]
 
     canal_atual = next(
-        (canal for canal in canais if canal["id"] == canal_id),
+        (
+            canal
+            for canal in canais
+            if canal["id"] == canal_id
+        ),
         None
     )
 
     if config_temporaria is not None:
-        config = normalizar_menu(config_temporaria)
-    elif canal_id and canal_id in dados["menus"]:
-        config = normalizar_menu(dados["menus"][canal_id])
+        config = normalizar_menu(
+            config_temporaria
+        )
+
+    elif (
+        canal_id
+        and canal_id in dados["menus"]
+    ):
+        config = normalizar_menu(
+            dados["menus"][canal_id]
+        )
+
     else:
         config = menu_padrao()
 
     menus_configurados = []
 
     for id_menu, menu in dados["menus"].items():
-        canal = next((item for item in canais if item["id"] == id_menu), None)
+        if id_menu not in ids_validos:
+            continue
+
+        canal = next(
+            (
+                item
+                for item in canais
+                if item["id"] == id_menu
+            ),
+            None
+        )
+
         menus_configurados.append({
             "canal_id": id_menu,
-            "canal_nome": canal["nome"] if canal else menu.get("canal_nome", f"Canal {id_menu}"),
-            "titulo": menu.get("titulo") or "Menu sem título",
-            "ativo": id_menu == canal_id
+            "canal_nome": (
+                canal["nome"]
+                if canal
+                else menu.get(
+                    "canal_nome",
+                    f"Canal {id_menu}"
+                )
+            ),
+            "titulo": (
+                menu.get("titulo")
+                or "Menu sem título"
+            ),
+            "ativo": (
+                id_menu == canal_id
+            )
         })
 
-    menus_configurados.sort(key=lambda item: item["canal_nome"].lower())
+    menus_configurados.sort(
+        key=lambda item: item[
+            "canal_nome"
+        ].lower()
+    )
+
+    usuarios = []
+
+    if acesso_total():
+        dados_usuarios = carregar_usuarios()
+
+        for chave, registro in dados_usuarios[
+            "usuarios"
+        ].items():
+            usuarios.append({
+                "usuario": registro.get(
+                    "usuario",
+                    chave
+                ),
+                "discord_id": str(
+                    registro.get("discord_id", "")
+                ),
+                "nivel_ultimo_login": registro.get(
+                    "nivel_ultimo_login",
+                    "revalidado no login"
+                ),
+            })
+
+        usuarios.sort(
+            key=lambda item: item[
+                "usuario"
+            ].casefold()
+        )
+
+    logs_dm = (
+        buscar_dm_administrativa_sync()
+        if aba == "central"
+        and acesso_total()
+        else []
+    )
 
     return {
+        "aba": aba,
         "config": config,
         "canais": canais,
         "canal_id": canal_id,
         "canal_atual": canal_atual,
         "menus_configurados": menus_configurados,
         "canal_teste_id": CANAL_TESTE_ID,
-        "bot_conectado": bot.is_ready() if TOKEN else False,
-        "max_botoes": MAX_BOTOES
+        "bot_conectado": (
+            bot.is_ready()
+            if TOKEN
+            else False
+        ),
+        "max_botoes": MAX_BOTOES,
+        "nivel": nivel_sessao(),
+        "acesso_total": acesso_total(),
+        "usuario_logado": session.get(
+            "usuario",
+            "Usuário"
+        ),
+        "discord_nome": session.get(
+            "discord_nome"
+        ),
+        "modelos_mensagens": MODELOS_MENSAGENS,
+        "logs_dm": logs_dm,
+        "usuarios_painel": usuarios,
+        "cargo_eventos_configurado": bool(
+            CARGO_EVENTOS_ID
+        ),
+        "canal_eventos_configurado": bool(
+            CANAL_EVENTOS_ID
+        ),
     }
 
 
 @app.route("/", methods=["GET", "POST"])
 @login_obrigatorio
 def painel():
+    aba = request.args.get(
+        "aba",
+        "menus"
+    )
+
     if request.method == "GET":
-        canal_id = request.args.get("canal")
-        return render_template(
-            "index.html",
-            **contexto_painel(canal_id=canal_id)
+        canal_id = request.args.get(
+            "canal"
         )
 
-    acao = request.form.get("acao", "salvar")
-    canal_id = request.form.get("canal_id", "").strip()
-
-    if not canal_id:
-        flash("❌ Selecione um canal antes de editar o menu.")
-        return redirect(url_for("painel"))
-
-    try:
-        novo_config = config_do_formulario(request.form)
-    except ValueError as erro:
-        flash(f"❌ {erro}")
         return render_template(
             "index.html",
             **contexto_painel(
                 canal_id=canal_id,
-                config_temporaria=request.form
+                aba=aba
             )
         )
 
-    canais = obter_canais_texto_sync()
+    # Somente a aba de menus usa o POST principal.
+    canal_id = request.form.get(
+        "canal_id",
+        ""
+    ).strip()
+
+    if not canal_id:
+        flash(
+            "❌ Selecione um canal antes de editar o menu."
+        )
+        return redirect(
+            url_for(
+                "painel",
+                aba="menus"
+            )
+        )
+
+    canais = filtrar_canais_por_permissao(
+        obter_canais_texto_sync()
+    )
+
+    if not canal_permitido_para_sessao(
+        canal_id,
+        canais
+    ):
+        flash(
+            "❌ Você não possui permissão "
+            "para editar esse canal."
+        )
+        return redirect(
+            url_for(
+                "painel",
+                aba="menus"
+            )
+        )
+
+    acao = request.form.get(
+        "acao",
+        "salvar"
+    )
+
+    try:
+        novo_config = config_do_formulario(
+            request.form
+        )
+
+    except ValueError as erro:
+        flash(f"❌ {erro}")
+
+        return render_template(
+            "index.html",
+            **contexto_painel(
+                canal_id=canal_id,
+                config_temporaria=request.form,
+                aba="menus"
+            )
+        )
+
     canal_atual = next(
-        (canal for canal in canais if canal["id"] == canal_id),
+        (
+            canal
+            for canal in canais
+            if canal["id"] == canal_id
+        ),
         None
     )
 
     if canais and canal_atual is None:
-        flash("❌ O canal selecionado não foi encontrado no servidor.")
-        return redirect(url_for("painel"))
+        flash(
+            "❌ O canal selecionado não foi "
+            "encontrado no servidor."
+        )
+        return redirect(
+            url_for(
+                "painel",
+                aba="menus"
+            )
+        )
 
     if acao == "testar":
         if not TOKEN:
-            flash("❌ TOKEN não configurado. Não foi possível enviar a prévia ao Discord.")
+            flash(
+                "❌ TOKEN não configurado. "
+                "Não foi possível enviar a prévia."
+            )
             return render_template(
                 "index.html",
-                **contexto_painel(canal_id=canal_id, config_temporaria=novo_config)
+                **contexto_painel(
+                    canal_id=canal_id,
+                    config_temporaria=novo_config,
+                    aba="menus"
+                )
             )
 
-        if not bot.is_ready() or BOT_LOOP is None:
-            flash("❌ O bot ainda não está conectado ao Discord. Tente novamente em alguns segundos.")
+        if (
+            not bot.is_ready()
+            or BOT_LOOP is None
+        ):
+            flash(
+                "❌ O bot ainda não está "
+                "conectado ao Discord."
+            )
             return render_template(
                 "index.html",
-                **contexto_painel(canal_id=canal_id, config_temporaria=novo_config)
+                **contexto_painel(
+                    canal_id=canal_id,
+                    config_temporaria=novo_config,
+                    aba="menus"
+                )
             )
 
         try:
             futuro = asyncio.run_coroutine_threadsafe(
-                enviar_teste_discord(novo_config),
+                enviar_teste_discord(
+                    novo_config
+                ),
                 BOT_LOOP
             )
             futuro.result(timeout=15)
-            flash("🧪 Prévia enviada ao canal de testes. Nenhum menu oficial foi alterado.")
+
+            flash(
+                "🧪 Prévia enviada ao canal de testes. "
+                "Nenhum menu oficial foi alterado."
+            )
+
         except Exception as erro:
-            print(f"Erro ao enviar prévia pelo painel: {repr(erro)}")
-            flash(f"❌ Não foi possível enviar a prévia: {erro}")
+            print(
+                "Erro ao enviar prévia pelo painel: "
+                f"{repr(erro)}"
+            )
+
+            flash(
+                "❌ Não foi possível enviar a prévia: "
+                f"{erro}"
+            )
 
         return render_template(
             "index.html",
-            **contexto_painel(canal_id=canal_id, config_temporaria=novo_config)
+            **contexto_painel(
+                canal_id=canal_id,
+                config_temporaria=novo_config,
+                aba="menus"
+            )
         )
 
     if acao == "excluir":
@@ -661,19 +1372,46 @@ def painel():
         if canal_id in dados["menus"]:
             del dados["menus"][canal_id]
             salvar_menus(dados)
-            flash("🗑️ Menu removido deste canal.")
-        else:
-            flash("ℹ️ Este canal ainda não possuía um menu salvo.")
+            flash(
+                "🗑️ Menu removido deste canal."
+            )
 
-        return redirect(url_for("painel", canal=canal_id))
+        else:
+            flash(
+                "ℹ️ Este canal ainda não "
+                "possuía um menu salvo."
+            )
+
+        return redirect(
+            url_for(
+                "painel",
+                aba="menus",
+                canal=canal_id
+            )
+        )
 
     canal_destino_id = request.form.get(
         "salvar_destino_id",
         canal_id
     ).strip()
 
-    if not canal_destino_id:
-        canal_destino_id = canal_id
+    if not canal_permitido_para_sessao(
+        canal_destino_id,
+        canais
+    ):
+        flash(
+            "❌ Você não possui permissão "
+            "para salvar nesse canal."
+        )
+
+        return render_template(
+            "index.html",
+            **contexto_painel(
+                canal_id=canal_id,
+                config_temporaria=novo_config,
+                aba="menus"
+            )
+        )
 
     canal_destino = next(
         (
@@ -693,21 +1431,31 @@ def painel():
             "index.html",
             **contexto_painel(
                 canal_id=canal_id,
-                config_temporaria=novo_config
+                config_temporaria=novo_config,
+                aba="menus"
             )
         )
 
     dados = carregar_menus()
 
-    menu_salvo = deepcopy(novo_config)
-    menu_salvo["canal_id"] = canal_destino_id
+    menu_salvo = deepcopy(
+        novo_config
+    )
+
+    menu_salvo["canal_id"] = (
+        canal_destino_id
+    )
+
     menu_salvo["canal_nome"] = (
         canal_destino["nome"]
         if canal_destino
         else f"Canal {canal_destino_id}"
     )
 
-    dados["menus"][canal_destino_id] = menu_salvo
+    dados["menus"][
+        canal_destino_id
+    ] = menu_salvo
+
     salvar_menus(dados)
 
     flash(
@@ -719,7 +1467,133 @@ def painel():
     return redirect(
         url_for(
             "painel",
+            aba="menus",
             canal=canal_destino_id
+        )
+    )
+
+
+@app.route(
+    "/usuarios/criar",
+    methods=["POST"]
+)
+@somente_full
+def criar_usuario_painel():
+    usuario = request.form.get(
+        "novo_usuario",
+        ""
+    ).strip()
+
+    senha = request.form.get(
+        "nova_senha",
+        ""
+    )
+
+    discord_id = request.form.get(
+        "discord_id",
+        ""
+    ).strip()
+
+    if len(usuario) < 3:
+        flash(
+            "❌ O usuário precisa ter pelo menos 3 caracteres."
+        )
+        return redirect(
+            url_for(
+                "painel",
+                aba="central"
+            )
+        )
+
+    if len(senha) < 6:
+        flash(
+            "❌ A senha precisa ter pelo menos 6 caracteres."
+        )
+        return redirect(
+            url_for(
+                "painel",
+                aba="central"
+            )
+        )
+
+    permissao = verificar_permissao_discord_sync(
+        discord_id
+    )
+
+    if not permissao["ok"]:
+        flash(
+            "❌ Conta não criada: "
+            f"{permissao['erro']}"
+        )
+        return redirect(
+            url_for(
+                "painel",
+                aba="central"
+            )
+        )
+
+    dados = carregar_usuarios()
+    chave = usuario.casefold()
+
+    if chave in dados["usuarios"]:
+        flash(
+            "❌ Já existe um usuário com esse nome."
+        )
+        return redirect(
+            url_for(
+                "painel",
+                aba="central"
+            )
+        )
+
+    dados["usuarios"][chave] = {
+        "usuario": usuario,
+        "discord_id": str(discord_id),
+        "senha_hash": generate_password_hash(
+            senha
+        ),
+        "nivel_ultimo_login": permissao[
+            "nivel"
+        ],
+    }
+
+    salvar_usuarios(dados)
+
+    flash(
+        "✅ Usuário criado: "
+        f"{usuario} • Discord: {permissao['nome']} • "
+        f"Nível: {permissao['nivel']}."
+    )
+
+    return redirect(
+        url_for(
+            "painel",
+            aba="central"
+        )
+    )
+
+
+@app.route(
+    "/usuarios/excluir/<usuario>",
+    methods=["POST"]
+)
+@somente_full
+def excluir_usuario_painel(usuario):
+    dados = carregar_usuarios()
+    chave = usuario.casefold()
+
+    if chave in dados["usuarios"]:
+        del dados["usuarios"][chave]
+        salvar_usuarios(dados)
+
+        flash(
+            f"🗑️ Usuário {usuario} removido do painel."
+        )
+
+    return redirect(
+        url_for(
+            "painel",
+            aba="central"
         )
     )
 
@@ -731,19 +1605,46 @@ def status():
     return {
         "site": "online",
         "bot_configurado": bool(TOKEN),
-        "bot_conectado": bot.is_ready() if TOKEN else False,
+        "bot_conectado": (
+            bot.is_ready()
+            if TOKEN
+            else False
+        ),
         "canal_teste_id": CANAL_TESTE_ID,
-        "menus_configurados": len(dados["menus"]),
+        "menus_configurados": len(
+            dados["menus"]
+        ),
         "max_botoes": MAX_BOTOES,
         "views_persistentes": bool(
-            getattr(bot, "_views_menus_registradas", False)
-        )
+            getattr(
+                bot,
+                "_views_menus_registradas",
+                False
+            )
+        ),
+        "usuarios_painel": len(
+            carregar_usuarios()["usuarios"]
+        ),
     }, 200
 
 
 if __name__ == "__main__":
-    thread_bot = threading.Thread(target=iniciar_bot, daemon=True)
+    thread_bot = threading.Thread(
+        target=iniciar_bot,
+        daemon=True
+    )
     thread_bot.start()
 
-    porta = int(os.getenv("PORT", "5000"))
-    app.run(host="0.0.0.0", port=porta, debug=False, use_reloader=False)
+    porta = int(
+        os.getenv(
+            "PORT",
+            "5000"
+        )
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=porta,
+        debug=False,
+        use_reloader=False
+    )
