@@ -268,17 +268,44 @@ class MenuView(discord.ui.View):
 
             argumentos = {
                 "label": nome[:80],
-                "emoji": emoji,
                 "style": discord.ButtonStyle.primary,
                 "row": indice // 5
             }
+
+            # Emoji inválido não pode derrubar o /menu inteiro.
+            if emoji:
+                try:
+                    argumentos["emoji"] = discord.PartialEmoji.from_str(
+                        str(emoji)
+                    )
+                except Exception as erro:
+                    print(
+                        "Emoji inválido ignorado | "
+                        f"canal={self.canal_id} "
+                        f"indice={indice} "
+                        f"emoji={emoji!r} "
+                        f"erro={erro!r}",
+                        flush=True
+                    )
 
             if persistente:
                 argumentos["custom_id"] = (
                     f"rm_menu:{self.canal_id}:{indice}"
                 )
 
-            botao = discord.ui.Button(**argumentos)
+            try:
+                botao = discord.ui.Button(**argumentos)
+            except Exception as erro:
+                print(
+                    "Falha ao criar botão com emoji; "
+                    "tentando sem emoji | "
+                    f"canal={self.canal_id} "
+                    f"indice={indice} "
+                    f"erro={erro!r}",
+                    flush=True
+                )
+                argumentos.pop("emoji", None)
+                botao = discord.ui.Button(**argumentos)
 
             async def callback(
                 interaction: discord.Interaction,
@@ -443,20 +470,46 @@ async def menu(interaction: discord.Interaction):
 
     config = normalizar_menu(config)
 
-    embed = discord.Embed(
-        title=config.get("titulo") or "Menu",
-        description=config.get("descricao") or "Escolha uma opção.",
-        color=cor_da_config(config)
-    )
+    try:
+        embed = discord.Embed(
+            title=config.get("titulo") or "Menu",
+            description=config.get("descricao") or "Escolha uma opção.",
+            color=cor_da_config(config)
+        )
 
-    await interaction.response.send_message(
-        embed=embed,
-        view=MenuView(
+        view = MenuView(
             config,
             str(interaction.channel_id),
             persistente=True
         )
-    )
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=view
+        )
+
+    except Exception as erro:
+        print(
+            "Erro real do /menu | "
+            f"{type(erro).__name__}: {erro!r}",
+            flush=True
+        )
+
+        mensagem = (
+            "❌ Não consegui montar esse menu. "
+            f"Erro: `{type(erro).__name__}`"
+        )
+
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                mensagem,
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                mensagem,
+                ephemeral=True
+            )
 
 
 
@@ -648,15 +701,6 @@ USERS_FILE = DATA_DIR / "panel_users.json"
 ADMIN_LOG_FILE = DATA_DIR / "admin_logs.json"
 ENTRADAS_FILE = DATA_DIR / "entradas.json"
 
-# Atualizações publicadas pelo site.
-# Fica no Volume (/data) para sobreviver a deploys/reinícios.
-ATUALIZACOES_FILE = DATA_DIR / "atualizacoes_painel.json"
-_atualizacoes_lock = threading.Lock()
-
-# O Discord aceita até 2000 caracteres por mensagem.
-# Usamos margem para evitar falhas com formatação/menções.
-DISCORD_MESSAGE_SAFE_LIMIT = 1900
-
 # Cargos reconhecidos pelo painel
 CARGO_BANIMENTOS_ID = 1536734408277491863
 CARGO_ENTRADA_ID = 1536894123657658468
@@ -676,268 +720,6 @@ CARGO_EVENTOS_ID = int(os.getenv("CARGO_EVENTOS_ID", "0") or "0")
 CANAL_EVENTOS_ID = int(os.getenv("CANAL_EVENTOS_ID", "0") or "0")
 
 _users_lock = threading.Lock()
-
-
-# =========================================================
-# ATUALIZAÇÕES / ROADMAP DO BOT
-# =========================================================
-
-def atualizacoes_vazias():
-    return {
-        "versao": 1,
-        "canal_id": "",
-        "futuras": {
-            "texto": "",
-            "mensagens_ids": [],
-            "canal_id": "",
-            "publicado_em": "",
-        },
-        "historico": [],
-    }
-
-
-def salvar_atualizacoes_sem_lock(dados):
-    temporario = ATUALIZACOES_FILE.with_suffix(".tmp")
-    with temporario.open("w", encoding="utf-8") as arquivo:
-        json.dump(
-            dados,
-            arquivo,
-            ensure_ascii=False,
-            indent=2
-        )
-    temporario.replace(ATUALIZACOES_FILE)
-
-
-def carregar_atualizacoes():
-    with _atualizacoes_lock:
-        if not ATUALIZACOES_FILE.exists():
-            salvar_atualizacoes_sem_lock(
-                atualizacoes_vazias()
-            )
-
-        try:
-            with ATUALIZACOES_FILE.open(
-                "r",
-                encoding="utf-8"
-            ) as arquivo:
-                dados = json.load(arquivo)
-        except (OSError, json.JSONDecodeError):
-            dados = atualizacoes_vazias()
-            salvar_atualizacoes_sem_lock(dados)
-
-        if not isinstance(dados, dict):
-            dados = atualizacoes_vazias()
-
-        dados.setdefault("versao", 1)
-        dados.setdefault("canal_id", "")
-        dados.setdefault(
-            "futuras",
-            atualizacoes_vazias()["futuras"]
-        )
-        dados.setdefault("historico", [])
-
-        if not isinstance(dados["historico"], list):
-            dados["historico"] = []
-
-        if not isinstance(dados["futuras"], dict):
-            dados["futuras"] = atualizacoes_vazias()["futuras"]
-
-        return dados
-
-
-def salvar_atualizacoes(dados):
-    with _atualizacoes_lock:
-        salvar_atualizacoes_sem_lock(dados)
-
-
-def quebrar_mensagem_discord(
-    texto,
-    limite=DISCORD_MESSAGE_SAFE_LIMIT
-):
-    """
-    Divide texto longo preservando parágrafos sempre que possível.
-    As partes são mensagens normais do Discord, nunca embeds.
-    """
-    texto = str(texto or "").replace("\\r\\n", "\\n").strip()
-
-    if not texto:
-        return []
-
-    if len(texto) <= limite:
-        return [texto]
-
-    partes = []
-    restante = texto
-
-    while restante:
-        if len(restante) <= limite:
-            partes.append(restante.strip())
-            break
-
-        corte = restante.rfind("\\n\\n", 0, limite + 1)
-
-        if corte < max(200, limite // 3):
-            corte = restante.rfind("\\n", 0, limite + 1)
-
-        if corte < max(200, limite // 3):
-            corte = restante.rfind(" ", 0, limite + 1)
-
-        if corte <= 0:
-            corte = limite
-
-        parte = restante[:corte].strip()
-
-        if parte:
-            partes.append(parte)
-
-        restante = restante[corte:].lstrip()
-
-    return partes
-
-
-async def localizar_canal_atualizacoes(
-    canal_id=None
-):
-    dados = carregar_atualizacoes()
-
-    escolhido = str(
-        canal_id
-        or dados.get("canal_id")
-        or ""
-    ).strip()
-
-    if escolhido:
-        try:
-            return await localizar_canal(
-                escolhido
-            )
-        except RuntimeError:
-            pass
-
-    guild = obter_guild_painel()
-
-    if guild is None:
-        raise RuntimeError(
-            "O bot do painel ainda não está conectado ao servidor."
-        )
-
-    # Fallback para facilitar a primeira configuração.
-    # Procura o canal que já está sendo usado para atualizações.
-    for canal in guild.text_channels:
-        nome = (
-            canal.name
-            .casefold()
-            .replace("_", "-")
-        )
-
-        if "atualiza" in nome:
-            return canal
-
-    raise RuntimeError(
-        "Canal de atualizações não configurado. "
-        "Escolha o canal na aba Atualizações."
-    )
-
-
-async def enviar_texto_normal_discord(
-    canal,
-    texto
-):
-    ids = []
-
-    for parte in quebrar_mensagem_discord(
-        texto
-    ):
-        mensagem = await canal.send(
-            parte,
-            allowed_mentions=discord.AllowedMentions(
-                users=True,
-                roles=False,
-                everyone=False
-            )
-        )
-        ids.append(
-            str(mensagem.id)
-        )
-
-    return ids
-
-
-async def apagar_mensagens_por_ids(
-    canal,
-    mensagens_ids
-):
-    removidas = 0
-
-    for mensagem_id in mensagens_ids or []:
-        try:
-            mensagem = await canal.fetch_message(
-                int(mensagem_id)
-            )
-            await mensagem.delete()
-            removidas += 1
-        except (
-            ValueError,
-            discord.NotFound,
-            discord.Forbidden,
-            discord.HTTPException
-        ):
-            continue
-
-    return removidas
-
-
-def executar_no_bot(
-    coroutine,
-    timeout=20
-):
-    if not TOKEN:
-        raise RuntimeError(
-            "TOKEN não configurado no Railway."
-        )
-
-    if not bot.is_ready() or BOT_LOOP is None:
-        raise RuntimeError(
-            "O bot do painel ainda não está conectado ao Discord."
-        )
-
-    futuro = asyncio.run_coroutine_threadsafe(
-        coroutine,
-        BOT_LOOP
-    )
-
-    return futuro.result(
-        timeout=timeout
-    )
-
-
-def resumo_atualizacoes_painel():
-    dados = carregar_atualizacoes()
-    futuras = dados.get("futuras") or {}
-
-    return {
-        "canal_id": str(
-            dados.get("canal_id")
-            or ""
-        ),
-        "futuras_texto": str(
-            futuras.get("texto")
-            or ""
-        ),
-        "futuras_publicadas": bool(
-            futuras.get("mensagens_ids")
-        ),
-        "futuras_publicado_em": str(
-            futuras.get("publicado_em")
-            or ""
-        ),
-        "historico": list(
-            reversed(
-                dados.get("historico", [])[-20:]
-            )
-        ),
-    }
-
 
 MODELOS_MENSAGENS = [
     {
@@ -1468,7 +1250,6 @@ def contexto_painel(
         "modelos",
         "central",
         "entradas",
-        "atualizacoes",
     }
 
     if aba not in abas_validas:
@@ -1481,9 +1262,6 @@ def contexto_painel(
         aba = "menus"
 
     if aba == "modelos" and nivel_sessao() not in {"full", "banimentos", "entrada", "minecraft"}:
-        aba = "menus"
-
-    if aba == "atualizacoes" and not acesso_total():
         aba = "menus"
 
     ids_validos = {
@@ -1615,18 +1393,6 @@ def contexto_painel(
 
     entradas, ranking_convites = resumo_entradas() if aba == "entradas" else ([], [])
 
-    atualizacoes = (
-        resumo_atualizacoes_painel()
-        if aba == "atualizacoes"
-        else {
-            "canal_id": "",
-            "futuras_texto": "",
-            "futuras_publicadas": False,
-            "futuras_publicado_em": "",
-            "historico": [],
-        }
-    )
-
     return {
         "aba": aba,
         "config": config,
@@ -1646,7 +1412,6 @@ def contexto_painel(
         "pode_ver_modelos": nivel_sessao() in {"full", "banimentos", "entrada", "minecraft"},
         "pode_ver_central": nivel_sessao() in {"full", "banimentos", "entrada", "minecraft"},
         "pode_ver_entradas": nivel_sessao() in {"full", "entrada"},
-        "pode_ver_atualizacoes": acesso_total(),
         "usuario_logado": session.get(
             "usuario",
             "Usuário"
@@ -1658,7 +1423,6 @@ def contexto_painel(
         "logs_admin": logs_admin,
         "entradas": entradas,
         "ranking_convites": ranking_convites,
-        "atualizacoes": atualizacoes,
         "usuarios_painel": usuarios,
         "cargo_eventos_configurado": bool(
             CARGO_EVENTOS_ID
@@ -1942,365 +1706,6 @@ def painel():
     )
 
 
-
-@app.route(
-    "/atualizacoes/canal",
-    methods=["POST"]
-)
-@somente_full
-def definir_canal_atualizacoes():
-    canal_id = request.form.get(
-        "canal_atualizacoes_id",
-        ""
-    ).strip()
-
-    canais = obter_canais_texto_sync()
-
-    if not any(
-        str(canal["id"]) == canal_id
-        for canal in canais
-    ):
-        flash(
-            "❌ O canal escolhido não foi encontrado no servidor."
-        )
-        return redirect(
-            url_for(
-                "painel",
-                aba="atualizacoes"
-            )
-        )
-
-    dados = carregar_atualizacoes()
-    dados["canal_id"] = canal_id
-    salvar_atualizacoes(dados)
-
-    flash(
-        "✅ Canal de atualizações salvo."
-    )
-
-    return redirect(
-        url_for(
-            "painel",
-            aba="atualizacoes"
-        )
-    )
-
-
-@app.route(
-    "/atualizacoes/futuras/publicar",
-    methods=["POST"]
-)
-@somente_full
-def publicar_atualizacoes_futuras():
-    texto = request.form.get(
-        "texto_futuras",
-        ""
-    ).strip()
-
-    if not texto:
-        flash(
-            "❌ Escreva as futuras atualizações antes de publicar."
-        )
-        return redirect(
-            url_for(
-                "painel",
-                aba="atualizacoes"
-            )
-        )
-
-    dados = carregar_atualizacoes()
-
-    canal_id = request.form.get(
-        "canal_atualizacoes_id",
-        ""
-    ).strip() or str(
-        dados.get("canal_id")
-        or ""
-    )
-
-    try:
-        canal = executar_no_bot(
-            localizar_canal_atualizacoes(
-                canal_id
-            )
-        )
-
-        antigas = (
-            dados.get("futuras")
-            or {}
-        )
-
-        antigo_canal_id = str(
-            antigas.get("canal_id")
-            or canal.id
-        )
-
-        # Se já existia uma mensagem de "futuras", ela pode ser substituída.
-        # O histórico de NOTAS LANÇADAS nunca é apagado por essa rotina.
-        if antigas.get("mensagens_ids"):
-            try:
-                canal_antigo = executar_no_bot(
-                    localizar_canal(
-                        antigo_canal_id
-                    )
-                )
-                executar_no_bot(
-                    apagar_mensagens_por_ids(
-                        canal_antigo,
-                        antigas.get(
-                            "mensagens_ids",
-                            []
-                        )
-                    )
-                )
-            except Exception as erro:
-                print(
-                    "Aviso ao remover futuras antigas: "
-                    f"{repr(erro)}"
-                )
-
-        mensagens_ids = executar_no_bot(
-            enviar_texto_normal_discord(
-                canal,
-                texto
-            )
-        )
-
-    except Exception as erro:
-        print(
-            "Erro ao publicar futuras atualizações: "
-            f"{repr(erro)}"
-        )
-        flash(
-            "❌ Não foi possível publicar no Discord: "
-            f"{erro}"
-        )
-        return redirect(
-            url_for(
-                "painel",
-                aba="atualizacoes"
-            )
-        )
-
-    dados["canal_id"] = str(
-        canal.id
-    )
-    dados["futuras"] = {
-        "texto": texto,
-        "mensagens_ids": mensagens_ids,
-        "canal_id": str(canal.id),
-        "publicado_em": agora_iso(),
-    }
-    salvar_atualizacoes(dados)
-
-    flash(
-        "🔮 Futuras atualizações publicadas. "
-        "Se você publicar outra prévia, esta será substituída."
-    )
-
-    return redirect(
-        url_for(
-            "painel",
-            aba="atualizacoes"
-        )
-    )
-
-
-@app.route(
-    "/atualizacoes/futuras/remover",
-    methods=["POST"]
-)
-@somente_full
-def remover_atualizacoes_futuras():
-    dados = carregar_atualizacoes()
-    futuras = dados.get("futuras") or {}
-
-    if not futuras.get("mensagens_ids"):
-        flash(
-            "ℹ️ Não existe mensagem de futuras atualizações ativa."
-        )
-        return redirect(
-            url_for(
-                "painel",
-                aba="atualizacoes"
-            )
-        )
-
-    try:
-        canal = executar_no_bot(
-            localizar_canal(
-                futuras.get("canal_id")
-                or dados.get("canal_id")
-            )
-        )
-        executar_no_bot(
-            apagar_mensagens_por_ids(
-                canal,
-                futuras.get(
-                    "mensagens_ids",
-                    []
-                )
-            )
-        )
-    except Exception as erro:
-        print(
-            "Erro ao remover futuras atualizações: "
-            f"{repr(erro)}"
-        )
-        flash(
-            "❌ Não foi possível remover a mensagem do Discord: "
-            f"{erro}"
-        )
-        return redirect(
-            url_for(
-                "painel",
-                aba="atualizacoes"
-            )
-        )
-
-    dados["futuras"] = atualizacoes_vazias()["futuras"]
-    salvar_atualizacoes(dados)
-
-    flash(
-        "🗑️ Futuras atualizações removidas do Discord."
-    )
-
-    return redirect(
-        url_for(
-            "painel",
-            aba="atualizacoes"
-        )
-    )
-
-
-@app.route(
-    "/atualizacoes/lancar",
-    methods=["POST"]
-)
-@somente_full
-def lancar_atualizacao():
-    notas = request.form.get(
-        "texto_notas",
-        ""
-    ).strip()
-
-    if not notas:
-        flash(
-            "❌ Cole as notas da atualização antes de lançar."
-        )
-        return redirect(
-            url_for(
-                "painel",
-                aba="atualizacoes"
-            )
-        )
-
-    dados = carregar_atualizacoes()
-
-    canal_id = request.form.get(
-        "canal_atualizacoes_id",
-        ""
-    ).strip() or str(
-        dados.get("canal_id")
-        or ""
-    )
-
-    futuras = dados.get("futuras") or {}
-
-    try:
-        canal = executar_no_bot(
-            localizar_canal_atualizacoes(
-                canal_id
-            )
-        )
-
-        # Primeiro publica as notas. Só depois remove a prévia futura.
-        # Assim uma falha no envio não faz a prévia desaparecer antes da hora.
-        notas_ids = executar_no_bot(
-            enviar_texto_normal_discord(
-                canal,
-                notas
-            )
-        )
-
-        if futuras.get("mensagens_ids"):
-            try:
-                canal_futuras = executar_no_bot(
-                    localizar_canal(
-                        futuras.get("canal_id")
-                        or canal.id
-                    )
-                )
-                executar_no_bot(
-                    apagar_mensagens_por_ids(
-                        canal_futuras,
-                        futuras.get(
-                            "mensagens_ids",
-                            []
-                        )
-                    )
-                )
-            except Exception as erro:
-                print(
-                    "Notas publicadas, mas não foi possível "
-                    "remover a prévia futura: "
-                    f"{repr(erro)}"
-                )
-                flash(
-                    "⚠️ Notas publicadas, mas a mensagem de futuras "
-                    "atualizações não pôde ser removida automaticamente."
-                )
-
-    except Exception as erro:
-        print(
-            "Erro ao lançar atualização: "
-            f"{repr(erro)}"
-        )
-        flash(
-            "❌ Não foi possível publicar as notas: "
-            f"{erro}"
-        )
-        return redirect(
-            url_for(
-                "painel",
-                aba="atualizacoes"
-            )
-        )
-
-    historico = dados.setdefault(
-        "historico",
-        []
-    )
-
-    historico.append({
-        "data": agora_iso(),
-        "texto": notas,
-        "mensagens_ids": notas_ids,
-        "canal_id": str(canal.id),
-        "futuras_anteriores": str(
-            futuras.get("texto")
-            or ""
-        ),
-    })
-
-    dados["historico"] = historico[-100:]
-    dados["canal_id"] = str(canal.id)
-    dados["futuras"] = atualizacoes_vazias()["futuras"]
-    salvar_atualizacoes(dados)
-
-    flash(
-        "🚀 Atualização lançada. "
-        "As notas ficaram no histórico e a mensagem de futuras atualizações saiu do canal."
-    )
-
-    return redirect(
-        url_for(
-            "painel",
-            aba="atualizacoes"
-        )
-    )
-
-
 @app.route(
     "/usuarios/criar",
     methods=["POST"]
@@ -2453,17 +1858,6 @@ def status():
         "usuarios_painel": len(
             carregar_usuarios()["usuarios"]
         ),
-        "atualizacoes": {
-            "canal_id": carregar_atualizacoes().get("canal_id", ""),
-            "futuras_ativas": bool(
-                (carregar_atualizacoes().get("futuras") or {}).get(
-                    "mensagens_ids"
-                )
-            ),
-            "historico_total": len(
-                carregar_atualizacoes().get("historico", [])
-            ),
-        },
     }, 200
 
 
