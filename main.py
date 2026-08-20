@@ -597,14 +597,28 @@ async def menu(interaction: discord.Interaction):
         color=cor_da_config(config)
     )
 
-    await interaction.response.send_message(
-        embed=embed,
-        view=MenuView(
+    try:
+        view = MenuView(
             config,
             str(interaction.channel_id),
             persistente=True
         )
-    )
+        await interaction.response.send_message(
+            embed=embed,
+            view=view
+        )
+    except Exception as erro:
+        print(
+            "Erro ao publicar /menu | "
+            f"canal={interaction.channel_id} erro={erro!r}",
+            flush=True
+        )
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ Não consegui publicar o menu. "
+                "A configuração continua salva; confira os botões/emoji no painel.",
+                ephemeral=True
+            )
 
 
 
@@ -1717,6 +1731,12 @@ def contexto_painel(
         None
     )
 
+    menu_bruto_atual = (
+        dados["menus"].get(canal_id, {})
+        if canal_id
+        else {}
+    )
+
     if config_temporaria is not None:
         config = normalizar_menu(
             config_temporaria
@@ -1732,6 +1752,13 @@ def contexto_painel(
 
     else:
         config = menu_padrao()
+
+    ultima_edicao_menu = {
+        "data": str(menu_bruto_atual.get("ultima_edicao") or ""),
+        "editor": str(menu_bruto_atual.get("ultimo_editor") or ""),
+        "usuario": str(menu_bruto_atual.get("ultimo_editor_usuario") or ""),
+        "nivel": str(menu_bruto_atual.get("ultimo_editor_nivel") or ""),
+    }
 
     menus_configurados = []
 
@@ -1825,6 +1852,7 @@ def contexto_painel(
     return {
         "aba": aba,
         "config": config,
+        "ultima_edicao_menu": ultima_edicao_menu,
         "canais": canais,
         "canal_id": canal_id,
         "canal_atual": canal_atual,
@@ -2115,6 +2143,17 @@ def painel():
         if canal_destino
         else f"Canal {canal_destino_id}"
     )
+
+    # Metadados compartilhados: qualquer nível autorizado edita o MESMO
+    # menu do canal. Assim o dono vê imediatamente quem fez a última alteração.
+    menu_salvo["ultima_edicao"] = agora_iso()
+    menu_salvo["ultimo_editor"] = (
+        session.get("discord_nome")
+        or session.get("usuario")
+        or "Usuário do painel"
+    )
+    menu_salvo["ultimo_editor_usuario"] = session.get("usuario", "")
+    menu_salvo["ultimo_editor_nivel"] = nivel_sessao()
 
     dados["menus"][
         canal_destino_id
