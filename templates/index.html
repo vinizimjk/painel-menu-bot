@@ -85,15 +85,6 @@ alt="Logo Resenha Máxima">
         📢 Atualizações
       </a>
       {% endif %}
-
-      {% if acesso_total %}
-      <a
-        class="panel-tab"
-        href="{{ url_for('configuracao_ia') }}"
-      >
-        🤖 IA
-      </a>
-      {% endif %}
     </nav>
 
     {% if nivel == 'eventos' %}
@@ -168,16 +159,6 @@ alt="Logo Resenha Máxima">
       {% endif %}
 
       {% if canal_id %}
-      {% if ultima_edicao_menu and ultima_edicao_menu.data %}
-      <section class="card menu-last-edit">
-        <strong>📝 Última edição:</strong>
-        {{ ultima_edicao_menu.editor or ultima_edicao_menu.usuario or "Usuário do painel" }}
-        • {{ ultima_edicao_menu.data }}
-        {% if ultima_edicao_menu.nivel %}
-        • acesso {{ ultima_edicao_menu.nivel }}
-        {% endif %}
-      </section>
-      {% endif %}
       <form method="post" id="menu-form">
         <input type="hidden" name="canal_id" value="{{ canal_id }}">
         <input
