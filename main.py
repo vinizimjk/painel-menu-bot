@@ -939,30 +939,6 @@ async def verificar_permissao_discord(discord_id):
             "erro": None
         }
 
-    if CARGO_BANIMENTOS_ID in ids_cargos:
-        return {
-            "ok": True,
-            "nivel": "banimentos",
-            "nome": str(membro),
-            "erro": None
-        }
-
-    if CARGO_ENTRADA_ID in ids_cargos:
-        return {
-            "ok": True,
-            "nivel": "entrada",
-            "nome": str(membro),
-            "erro": None
-        }
-
-    if CARGO_PATENTE_MINECRAFT_ID in ids_cargos:
-        return {
-            "ok": True,
-            "nivel": "minecraft",
-            "nome": str(membro),
-            "erro": None
-        }
-
     cargo_eventos_encontrado = False
 
     if CARGO_EVENTOS_ID:
@@ -986,6 +962,30 @@ async def verificar_permissao_discord(discord_id):
         return {
             "ok": True,
             "nivel": "eventos",
+            "nome": str(membro),
+            "erro": None
+        }
+
+    if CARGO_BANIMENTOS_ID in ids_cargos:
+        return {
+            "ok": True,
+            "nivel": "banimentos",
+            "nome": str(membro),
+            "erro": None
+        }
+
+    if CARGO_ENTRADA_ID in ids_cargos:
+        return {
+            "ok": True,
+            "nivel": "entrada",
+            "nome": str(membro),
+            "erro": None
+        }
+
+    if CARGO_PATENTE_MINECRAFT_ID in ids_cargos:
+        return {
+            "ok": True,
+            "nivel": "minecraft",
             "nome": str(membro),
             "erro": None
         }
