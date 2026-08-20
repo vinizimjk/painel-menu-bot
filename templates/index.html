@@ -85,6 +85,15 @@ alt="Logo Resenha Máxima">
         📢 Atualizações
       </a>
       {% endif %}
+
+      {% if acesso_total %}
+      <a
+        class="panel-tab {% if aba == 'ia' %}active{% endif %}"
+        href="{{ url_for('painel', aba='ia') }}"
+      >
+        🤖 IA
+      </a>
+      {% endif %}
     </nav>
 
     {% if nivel == 'eventos' %}
