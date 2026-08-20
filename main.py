@@ -55,6 +55,7 @@ CONFIG_ANTIGO_FILE = DATA_DIR / "menu_config.json"
 
 # Canal usado apenas para prévias/testes enviados pelo painel.
 CANAL_TESTE_ID = 1537936115233722388
+CANAL_EVENTOS_ID = int(os.getenv("CANAL_EVENTOS_ID", "1535124939940823110") or 1535124939940823110)
 
 # Permissões do /menu deste serviço.
 DONO_ID = 1455937306400653344
