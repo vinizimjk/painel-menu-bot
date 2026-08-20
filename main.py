@@ -31,6 +31,24 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # Novo arquivo: vários menus, um por canal.
 MENUS_FILE = DATA_DIR / "menus_config.json"
 
+# Configuração de comportamento da IA do bot principal.
+# O bot consulta /api/ia-config periodicamente.
+IA_CONFIG_FILE = DATA_DIR / "ia_config.json"
+_ia_config_lock = threading.Lock()
+
+IA_CONFIG_PADRAO = {
+    "ativa": True,
+    "chance_abreviacao": 50,
+    "espelhar_palavrao": True,
+    "consciencia_horario": True,
+    "zoar_saudacao_errada": True,
+    "temperatura": 1.02,
+    "max_tokens": 650,
+    "tentativas": 4,
+    "emoji_falha": "⚠️",
+    "cache_segundos": 30,
+}
+
 # Arquivo antigo. Se existir, o painel consegue aproveitar a configuração
 # como modelo inicial sem apagar os dados antigos.
 CONFIG_ANTIGO_FILE = DATA_DIR / "menu_config.json"
@@ -208,6 +226,108 @@ def config_do_formulario(form):
     }
 
 
+
+# =========================================================
+# CONFIGURAÇÃO DA IA
+# =========================================================
+
+def normalizar_config_ia(dados):
+    base = deepcopy(IA_CONFIG_PADRAO)
+
+    if not isinstance(dados, dict):
+        return base
+
+    base["ativa"] = bool(dados.get("ativa", base["ativa"]))
+    base["espelhar_palavrao"] = bool(
+        dados.get("espelhar_palavrao", base["espelhar_palavrao"])
+    )
+    base["consciencia_horario"] = bool(
+        dados.get("consciencia_horario", base["consciencia_horario"])
+    )
+    base["zoar_saudacao_errada"] = bool(
+        dados.get("zoar_saudacao_errada", base["zoar_saudacao_errada"])
+    )
+
+    try:
+        base["chance_abreviacao"] = max(
+            0,
+            min(100, int(dados.get("chance_abreviacao", base["chance_abreviacao"])))
+        )
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        base["temperatura"] = max(
+            0.0,
+            min(2.0, float(dados.get("temperatura", base["temperatura"])))
+        )
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        base["max_tokens"] = max(
+            100,
+            min(1500, int(dados.get("max_tokens", base["max_tokens"])))
+        )
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        base["tentativas"] = max(
+            1,
+            min(6, int(dados.get("tentativas", base["tentativas"])))
+        )
+    except (TypeError, ValueError):
+        pass
+
+    emoji = str(dados.get("emoji_falha") or base["emoji_falha"]).strip()
+    base["emoji_falha"] = emoji[:32] or "⚠️"
+
+    try:
+        base["cache_segundos"] = max(
+            10,
+            min(300, int(dados.get("cache_segundos", base["cache_segundos"])))
+        )
+    except (TypeError, ValueError):
+        pass
+
+    return base
+
+
+def carregar_config_ia():
+    with _ia_config_lock:
+        if not IA_CONFIG_FILE.exists():
+            config = deepcopy(IA_CONFIG_PADRAO)
+            temporario = IA_CONFIG_FILE.with_suffix(".tmp")
+            temporario.write_text(
+                json.dumps(config, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+            temporario.replace(IA_CONFIG_FILE)
+            return config
+
+        try:
+            dados = json.loads(IA_CONFIG_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            dados = {}
+
+        return normalizar_config_ia(dados)
+
+
+def salvar_config_ia(config):
+    config = normalizar_config_ia(config)
+
+    with _ia_config_lock:
+        temporario = IA_CONFIG_FILE.with_suffix(".tmp")
+        temporario.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+        temporario.replace(IA_CONFIG_FILE)
+
+    return config
+
+
 # =========================================================
 # BOT DO DISCORD
 # =========================================================
@@ -269,17 +389,44 @@ class MenuView(discord.ui.View):
 
             argumentos = {
                 "label": nome[:80],
-                "emoji": emoji,
                 "style": discord.ButtonStyle.primary,
                 "row": indice // 5
             }
+
+            # Emoji inválido não pode derrubar o /menu inteiro.
+            if emoji:
+                try:
+                    argumentos["emoji"] = discord.PartialEmoji.from_str(
+                        str(emoji)
+                    )
+                except Exception as erro:
+                    print(
+                        "Emoji inválido ignorado | "
+                        f"canal={self.canal_id} "
+                        f"indice={indice} "
+                        f"emoji={emoji!r} "
+                        f"erro={erro!r}",
+                        flush=True
+                    )
 
             if persistente:
                 argumentos["custom_id"] = (
                     f"rm_menu:{self.canal_id}:{indice}"
                 )
 
-            botao = discord.ui.Button(**argumentos)
+            try:
+                botao = discord.ui.Button(**argumentos)
+            except Exception as erro:
+                print(
+                    "Falha ao criar botão com emoji; "
+                    "tentando sem emoji | "
+                    f"canal={self.canal_id} "
+                    f"indice={indice} "
+                    f"erro={erro!r}",
+                    flush=True
+                )
+                argumentos.pop("emoji", None)
+                botao = discord.ui.Button(**argumentos)
 
             async def callback(
                 interaction: discord.Interaction,
@@ -2485,6 +2632,43 @@ def excluir_usuario_painel(usuario):
     )
 
 
+
+@app.route("/ia", methods=["GET"])
+@somente_full
+def configuracao_ia():
+    return render_template(
+        "ia.html",
+        config_ia=carregar_config_ia(),
+    )
+
+
+@app.route("/ia/salvar", methods=["POST"])
+@somente_full
+def salvar_configuracao_ia():
+    config = {
+        "ativa": request.form.get("ativa") == "on",
+        "chance_abreviacao": request.form.get("chance_abreviacao", "50"),
+        "espelhar_palavrao": request.form.get("espelhar_palavrao") == "on",
+        "consciencia_horario": request.form.get("consciencia_horario") == "on",
+        "zoar_saudacao_errada": request.form.get("zoar_saudacao_errada") == "on",
+        "temperatura": request.form.get("temperatura", "1.02"),
+        "max_tokens": request.form.get("max_tokens", "650"),
+        "tentativas": request.form.get("tentativas", "4"),
+        "emoji_falha": request.form.get("emoji_falha", "⚠️"),
+        "cache_segundos": request.form.get("cache_segundos", "30"),
+    }
+
+    salvar_config_ia(config)
+    flash("✅ Configuração da IA salva. O bot aplica as mudanças automaticamente em alguns segundos.")
+    return redirect(url_for("configuracao_ia"))
+
+
+@app.route("/api/ia-config", methods=["GET"])
+def api_configuracao_ia():
+    # Não contém token/chave da Groq; expõe somente comportamento do bot.
+    return carregar_config_ia(), 200
+
+
 @app.route("/status")
 def status():
     dados = carregar_menus()
@@ -2512,6 +2696,7 @@ def status():
         "usuarios_painel": len(
             carregar_usuarios()["usuarios"]
         ),
+        "config_ia": carregar_config_ia(),
         "atualizacoes": {
             "canal_id": carregar_atualizacoes().get("canal_id", ""),
             "futuras_ativas": bool(
