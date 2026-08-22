@@ -664,7 +664,7 @@ IA_CONFIG_PADRAO = {
     "caos_hora_fim": 23,
     "caos_intervalo_minutos": 120,
     "caos_chance": 0.12,
-    "call_cooldown_minutos": 45,
+    "call_cooldown_minutos": 10,
 }
 
 
@@ -2549,7 +2549,7 @@ def salvar_configuracao_ia():
             "ia_caos_chance", 0.12, 0.0, 1.0
         ),
         "call_cooldown_minutos": _int_form(
-            "ia_call_cooldown_minutos", 45, 5, 1440
+            "ia_call_cooldown_minutos", 10, 5, 1440
         ),
     }
 
