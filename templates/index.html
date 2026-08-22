@@ -85,6 +85,15 @@ alt="Logo Resenha Máxima">
         📢 Atualizações
       </a>
       {% endif %}
+
+      {% if pode_ver_ia %}
+      <a
+        class="panel-tab {% if aba == 'ia' %}active{% endif %}"
+        href="{{ url_for('painel', aba='ia') }}"
+      >
+        🤖 IA
+      </a>
+      {% endif %}
     </nav>
 
     {% if nivel == 'eventos' %}
@@ -832,7 +841,119 @@ alt="Avatar Resenha Máxima">
         </div>
       </section>
 
-    {% endif %}
+        {% elif aba == 'ia' and pode_ver_ia %}
+      <section class="updates-hero card">
+        <div>
+          <span class="eyebrow gold">CONFIGURAÇÃO REMOTA</span>
+          <h2>🤖 Configuração da IA</h2>
+          <p class="muted">
+            O bot consulta esta configuração pelo endpoint do painel.
+            Os valores ficam salvos no Volume /data e sobrevivem aos deploys.
+          </p>
+        </div>
+        <span class="update-status {% if ia_config.ativa %}live{% endif %}">
+          {% if ia_config.ativa %}🟢 IA ativa{% else %}🔴 IA desativada{% endif %}
+        </span>
+      </section>
+
+      <form method="post" action="{{ url_for('salvar_configuracao_ia') }}">
+        <div class="updates-grid">
+          <section class="card">
+            <span class="eyebrow gold">GERAL</span>
+            <h2>⚙️ Funcionamento</h2>
+
+            <label style="display:flex;gap:10px;align-items:center;margin:18px 0;">
+              <input
+                type="checkbox"
+                name="ia_ativa"
+                value="1"
+                {% if ia_config.ativa %}checked{% endif %}
+              >
+              <strong>IA ativada</strong>
+            </label>
+
+            <label for="ia_canal_id">Canal onde a IA responde</label>
+            <select id="ia_canal_id" name="ia_canal_id">
+              <option value="">Todos os canais</option>
+              {% for canal in canais %}
+                <option
+                  value="{{ canal.id }}"
+                  {% if canal.id|string == ia_config.canal_id|string %}selected{% endif %}
+                >
+                  # {{ canal.nome }} — {{ canal.categoria }}
+                </option>
+              {% endfor %}
+            </select>
+
+            <label style="display:flex;gap:10px;align-items:center;margin:22px 0;">
+              <input
+                type="checkbox"
+                name="ia_caos_ativo"
+                value="1"
+                {% if ia_config.caos_ativo %}checked{% endif %}
+              >
+              <strong>Modo IA causando ativado</strong>
+            </label>
+          </section>
+
+          <section class="card">
+            <span class="eyebrow gold">ZOEIRA AUTOMÁTICA</span>
+            <h2>😈 IA causando</h2>
+
+            <label>Começa às</label>
+            <input
+              type="number"
+              min="0"
+              max="23"
+              name="ia_caos_hora_inicio"
+              value="{{ ia_config.caos_hora_inicio }}"
+            >
+
+            <label>Termina às</label>
+            <input
+              type="number"
+              min="1"
+              max="24"
+              name="ia_caos_hora_fim"
+              value="{{ ia_config.caos_hora_fim }}"
+            >
+
+            <label>Intervalo mínimo entre ações (minutos)</label>
+            <input
+              type="number"
+              min="15"
+              max="1440"
+              name="ia_caos_intervalo_minutos"
+              value="{{ ia_config.caos_intervalo_minutos }}"
+            >
+
+            <label>Chance por ciclo (0 a 1)</label>
+            <input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              name="ia_caos_chance"
+              value="{{ ia_config.caos_chance }}"
+            >
+
+            <label>Cooldown para a IA entrar em call (minutos)</label>
+            <input
+              type="number"
+              min="5"
+              max="1440"
+              name="ia_call_cooldown_minutos"
+              value="{{ ia_config.call_cooldown_minutos }}"
+            >
+          </section>
+        </div>
+
+        <section class="card" style="margin-top:18px;">
+          <button type="submit">💾 Salvar configuração da IA</button>
+        </section>
+      </form>
+
+{% endif %}
   </main>
 
   <template id="option-template">
