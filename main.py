@@ -1,6 +1,7 @@
 import asyncio
 import os
 import json
+import random
 import threading
 import secrets
 from copy import deepcopy
@@ -756,6 +757,59 @@ def _float_form(nome, padrao, minimo, maximo):
 # ATUALIZAÇÕES / ROADMAP DO BOT
 # =========================================================
 
+# Rodapé aleatório das "Futuras atualizações".
+# Mantém o título fixo e varia apenas a frase que aparece logo abaixo.
+FUTURAS_FRASES_FINAIS = [
+    "Não sabemos, tem que ver com o ADM aí.",
+    "Pergunta pro ADM, eu só trabalho aqui.",
+    "Sem previsão. O ADM ainda tá inventando moda.",
+    "Quando o ADM criar coragem.",
+    "Algum dia... provavelmente.",
+    "Assim que o ADM parar de adicionar coisa nova.",
+    "O calendário do ADM ainda não chegou aqui.",
+    "Em breve™. Reclama com o ADM.",
+    "Data? Só o ADM e Deus sabem.",
+    "Estamos aguardando o ADM decidir.",
+]
+
+# Stickers já usados anteriormente pelo painel da Resenha Máxima.
+FUTURAS_STICKER_IDS = [
+    1534440607001477198,  # Posso ser admin?
+    1536827969350144091,
+    1532831592093978684,
+    1534440355393568859,
+    1536824358822092931,
+    1533118564456992908,
+]
+
+
+def escolher_rodape_futuras(anteriores=None):
+    anteriores = anteriores or {}
+    frase_anterior = str(anteriores.get("frase_final") or "")
+    sticker_anterior = str(anteriores.get("sticker_id") or "")
+
+    frases = [
+        frase for frase in FUTURAS_FRASES_FINAIS
+        if frase != frase_anterior
+    ] or FUTURAS_FRASES_FINAIS
+
+    stickers = [
+        str(sticker_id) for sticker_id in FUTURAS_STICKER_IDS
+        if str(sticker_id) != sticker_anterior
+    ] or [str(sticker_id) for sticker_id in FUTURAS_STICKER_IDS]
+
+    return random.choice(frases), random.choice(stickers)
+
+
+def montar_texto_futuras(texto, frase_final):
+    base = str(texto or "").rstrip()
+    return (
+        f"{base}\n\n"
+        f"**📅 Data da atualização:**\n"
+        f"{frase_final}"
+    )
+
+
 def atualizacoes_vazias():
     return {
         "versao": 1,
@@ -765,6 +819,8 @@ def atualizacoes_vazias():
             "mensagens_ids": [],
             "canal_id": "",
             "publicado_em": "",
+            "frase_final": "",
+            "sticker_id": "",
         },
         "historico": [],
     }
@@ -815,6 +871,9 @@ def carregar_atualizacoes():
 
         if not isinstance(dados["futuras"], dict):
             dados["futuras"] = atualizacoes_vazias()["futuras"]
+
+        dados["futuras"].setdefault("frase_final", "")
+        dados["futuras"].setdefault("sticker_id", "")
 
         return dados
 
@@ -935,6 +994,32 @@ async def enviar_texto_normal_discord(
         )
 
     return ids
+
+
+async def enviar_sticker_futuras(canal, sticker_id):
+    """Envia um sticker do servidor e devolve o ID da mensagem criada."""
+    try:
+        sticker = await canal.guild.fetch_sticker(
+            int(sticker_id)
+        )
+        mensagem = await canal.send(
+            stickers=[sticker]
+        )
+        return str(mensagem.id)
+    except (
+        ValueError,
+        discord.NotFound,
+        discord.Forbidden,
+        discord.HTTPException
+    ) as erro:
+        # Se um sticker tiver sido removido ou o bot não puder usá-lo,
+        # a mensagem textual de futuras atualizações continua publicada.
+        print(
+            "Aviso: não foi possível enviar sticker "
+            f"{sticker_id}: {erro!r}",
+            flush=True
+        )
+        return ""
 
 
 async def apagar_mensagens_por_ids(
@@ -2145,12 +2230,31 @@ def publicar_atualizacoes_futuras():
                     f"{repr(erro)}"
                 )
 
+        frase_final, sticker_id = escolher_rodape_futuras(
+            antigas
+        )
+        texto_publicado = montar_texto_futuras(
+            texto,
+            frase_final
+        )
+
         mensagens_ids = executar_no_bot(
             enviar_texto_normal_discord(
                 canal,
-                texto
+                texto_publicado
             )
         )
+
+        sticker_mensagem_id = executar_no_bot(
+            enviar_sticker_futuras(
+                canal,
+                sticker_id
+            )
+        )
+        if sticker_mensagem_id:
+            mensagens_ids.append(
+                sticker_mensagem_id
+            )
 
     except Exception as erro:
         print(
@@ -2176,6 +2280,8 @@ def publicar_atualizacoes_futuras():
         "mensagens_ids": mensagens_ids,
         "canal_id": str(canal.id),
         "publicado_em": agora_iso(),
+        "frase_final": frase_final,
+        "sticker_id": sticker_id,
     }
     salvar_atualizacoes(dados)
 
