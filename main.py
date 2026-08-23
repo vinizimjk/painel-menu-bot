@@ -2924,6 +2924,30 @@ def api_eventos_criar_candidatura():
     })
 
 
+def _campo_oculto_relatorio_eventos(pergunta):
+    titulo = str(pergunta or "").strip().casefold()
+    substituicoes = str.maketrans({
+        "á": "a", "à": "a", "ã": "a", "â": "a",
+        "é": "e", "ê": "e",
+        "í": "i",
+        "ó": "o", "ô": "o", "õ": "o",
+        "ú": "u", "ç": "c",
+    })
+    titulo = titulo.translate(substituicoes)
+    return titulo in {
+        "carimbo de data/hora",
+        "timestamp",
+        "horario",
+        "data e hora",
+        "endereco de e-mail",
+        "endereco de email",
+        "e-mail",
+        "email",
+        "pontuacao",
+        "score",
+    }
+
+
 @app.route(
     "/api/recrutamento/eventos/prova",
     methods=["POST"],
@@ -2969,7 +2993,7 @@ def api_eventos_receber_prova():
             continue
         pergunta = str(item.get("pergunta") or "").strip()[:1000]
         resposta = str(item.get("resposta") or "").strip()[:5000]
-        if pergunta:
+        if pergunta and not _campo_oculto_relatorio_eventos(pergunta):
             respostas_limpas.append({
                 "pergunta": pergunta,
                 "resposta": resposta,
