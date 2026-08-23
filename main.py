@@ -2887,18 +2887,31 @@ def api_eventos_criar_candidatura():
     for candidatura in dados.get("candidaturas", {}).values():
         if str(candidatura.get("discord_id")) != discord_id:
             continue
-        if candidatura.get("status") in {
-            "aguardando_prova",
+
+        status_atual = str(candidatura.get("status") or "").strip()
+
+        # Só reutiliza o código enquanto a pessoa AINDA não enviou a prova.
+        # Depois que a candidatura avançou, devolver o mesmo código criava
+        # um botão que inevitavelmente abria uma página 409.
+        if status_atual == "aguardando_prova":
+            return jsonify({
+                "ok": True,
+                "codigo": candidatura.get("codigo"),
+                "reutilizada": True,
+                "status": status_atual,
+            })
+
+        if status_atual in {
             "prova_recebida",
             "em_avaliacao",
             "em_call",
         }:
             return jsonify({
-                "ok": True,
+                "ok": False,
+                "erro": "candidatura_em_andamento",
                 "codigo": candidatura.get("codigo"),
-                "reutilizada": True,
-                "status": candidatura.get("status"),
-            })
+                "status": status_atual,
+            }), 409
 
     codigo = _gerar_codigo_candidatura(dados)
     candidatura = {
@@ -2946,6 +2959,59 @@ def _campo_oculto_relatorio_eventos(pergunta):
         "pontuacao",
         "score",
     }
+
+
+@app.route(
+    "/api/recrutamento/eventos/resetar-teste",
+    methods=["POST"],
+)
+def api_eventos_resetar_teste():
+    """Apaga o histórico de recrutamento de uma conta escolhida pelo dono.
+
+    Esta rota existe para testes repetidos do fluxo. Ela é protegida pela
+    mesma chave secreta usada pelo bot/site e nunca é exposta no painel
+    público do candidato.
+    """
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_recrutamento_eventos(payload):
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    discord_id = str(payload.get("discord_id") or "").strip()
+    if not discord_id.isdigit():
+        return jsonify({
+            "ok": False,
+            "erro": "Discord ID inválido.",
+        }), 400
+
+    dados = carregar_recrutamento_eventos()
+    removidas = []
+
+    for codigo, candidatura in list(
+        dados.get("candidaturas", {}).items()
+    ):
+        if str(candidatura.get("discord_id") or "") != discord_id:
+            continue
+        removidas.append({
+            "codigo": codigo,
+            "status": str(candidatura.get("status") or ""),
+            "discord_channel_id": str(
+                candidatura.get("discord_channel_id") or ""
+            ),
+            "voice_channel_id": str(
+                candidatura.get("voice_channel_id") or ""
+            ),
+        })
+        dados["candidaturas"].pop(codigo, None)
+
+    dados.setdefault("cooldowns", {}).pop(discord_id, None)
+    salvar_recrutamento_eventos(dados)
+
+    return jsonify({
+        "ok": True,
+        "discord_id": discord_id,
+        "removidas": removidas,
+        "total_removidas": len(removidas),
+    })
 
 
 @app.route(
