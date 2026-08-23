@@ -867,17 +867,32 @@ def _float_form(nome, padrao, minimo, maximo):
 # Rodapé aleatório das "Futuras atualizações".
 # Mantém o título fixo e varia apenas a frase que aparece logo abaixo.
 FUTURAS_FRASES_FINAIS = [
-    "Não sabemos, tem que ver com o ADM aí.",
-    "Pergunta pro ADM, eu só trabalho aqui.",
-    "Sem previsão. O ADM ainda tá inventando moda.",
-    "Quando o ADM criar coragem.",
+    "Não sabemos, tem que ver com o ADM-G aí.",
+    "Pergunta pro Baiano do Vini, eu só trabalho aqui.",
+    "Sem previsão. O Vini ainda tá inventando moda.",
+    "Quando esse corno que me programa criar coragem.",
     "Algum dia... provavelmente.",
-    "Assim que o ADM parar de adicionar coisa nova.",
-    "O calendário do ADM ainda não chegou aqui.",
-    "Em breve™. Reclama com o ADM.",
-    "Data? Só o ADM e Deus sabem.",
-    "Estamos aguardando o ADM decidir.",
+    "Assim que o ADM-G parar de adicionar coisa nova.",
+    "O calendário do Baiano do Vini ainda não chegou aqui.",
+    "Em breve™. Reclama com o programador.",
+    "Data? Só o Vini e Deus sabem.",
+    "Estamos aguardando o ADM-G decidir.",
+    "O vagabundo do Vini disse que só quando o PT sair do governo.",
+    "Provavelmente o ADM-G tá esperando o Hexa antes da atualização.",
+    "Esse corno que me programa deve estar esperando o GTA VI sair primeiro.",
+    "O Baiano do Vini falou ‘em breve’. Traduzindo: pode sentar e esperar.",
+    "Segundo o Vini, falta pouco. Ele também fala isso faz tempo.",
+    "Talvez saia antes do próximo feriado. Talvez.",
+    "O Baiano tá trabalhando nisso. Fonte: vozes da minha cabeça.",
+    "Quando o ADM-G parar de adicionar ideia nova antes de terminar a antiga.",
+    "Atualização prevista para quando Deus quiser e o Vini colaborar.",
+    "O programador jurou que está quase pronto. Eu também queria acreditar.",
+    "Vai cobrar o ADM-G, não vem descontar em mim não.",
+    "Meu querido programador desocupado disse ‘já já’. Faça sua própria interpretação.",
+    "O Vini prometeu terminar antes do Brasil ganhar outro Mundial. Estamos preocupados.",
+    "O Baiano do Vini deve estar compilando a atualização em uma calculadora.",
 ]
+
 
 # Stickers já usados anteriormente pelo painel da Resenha Máxima.
 FUTURAS_STICKER_IDS = [
@@ -908,13 +923,92 @@ def escolher_rodape_futuras(anteriores=None):
     return random.choice(frases), random.choice(stickers)
 
 
+def _remover_titulo_futuras_existente(texto):
+    linhas = str(texto or "").strip().splitlines()
+    if not linhas:
+        return ""
+
+    primeira = linhas[0].strip()
+    normalizada = primeira.casefold()
+    normalizada = (
+        normalizada
+        .replace("á", "a")
+        .replace("ã", "a")
+        .replace("â", "a")
+        .replace("à", "a")
+        .replace("é", "e")
+        .replace("ê", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ô", "o")
+        .replace("õ", "o")
+        .replace("ú", "u")
+        .replace("ç", "c")
+    )
+
+    if primeira.startswith("#") and (
+        "futuras atualizacoes" in normalizada
+        or "proximas atualizacoes" in normalizada
+    ):
+        linhas = linhas[1:]
+
+    return "\n".join(linhas).strip()
+
+
 def montar_texto_futuras(texto, frase_final):
-    base = str(texto or "").rstrip()
-    return (
-        f"{base}\n\n"
-        f"**📅 Data da atualização:**\n"
+    base = _remover_titulo_futuras_existente(texto)
+    partes = ["## Futuras atualizações"]
+    if base:
+        partes.append(base)
+    partes.append(
+        "**📅 Data da atualização:**\n"
         f"{frase_final}"
     )
+    return "\n\n".join(partes)
+
+
+def montar_texto_notas(texto):
+    """Garante um único título fixo para notas lançadas pelo painel."""
+    linhas = str(texto or "").strip().splitlines()
+
+    while linhas and not linhas[0].strip():
+        linhas.pop(0)
+
+    if linhas:
+        primeira = linhas[0].strip()
+        normalizada = primeira.casefold()
+        normalizada = (
+            normalizada
+            .replace("á", "a")
+            .replace("ã", "a")
+            .replace("â", "a")
+            .replace("à", "a")
+            .replace("é", "e")
+            .replace("ê", "e")
+            .replace("í", "i")
+            .replace("ó", "o")
+            .replace("ô", "o")
+            .replace("õ", "o")
+            .replace("ú", "u")
+            .replace("ç", "c")
+        )
+
+        # Remove apenas um título geral antigo. Se a primeira linha já for
+        # uma seção como "## 🆕 NOVIDADES", ela é preservada.
+        if primeira.startswith("#") and (
+            "nota" in normalizada
+            or "atualizacao" in normalizada
+            or primeira.startswith("# 📝")
+        ) and not any(
+            palavra in normalizada
+            for palavra in ("novidades", "correcoes", "alteracoes", "problemas")
+        ):
+            linhas = linhas[1:]
+
+    corpo = "\n".join(linhas).strip()
+    if corpo:
+        return "## Notas de atualização\n\n" + corpo
+    return "## Notas de atualização"
 
 
 def atualizacoes_vazias():
@@ -2493,6 +2587,8 @@ def lancar_atualizacao():
                 aba="atualizacoes"
             )
         )
+
+    notas = montar_texto_notas(notas)
 
     dados = carregar_atualizacoes()
 
