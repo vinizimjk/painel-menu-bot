@@ -2,12 +2,13 @@ import asyncio
 import os
 import json
 import random
+import re
 import threading
 import secrets
 from copy import deepcopy
 from pathlib import Path
 from functools import wraps
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import discord
 from discord.ext import commands
@@ -656,6 +657,112 @@ _atualizacoes_lock = threading.Lock()
 
 IA_CONFIG_FILE = DATA_DIR / "ia_config.json"
 _ia_config_lock = threading.Lock()
+
+# =========================================================
+# RECRUTAMENTO — DEPARTAMENTO DE EVENTOS / GOOGLE FORMS
+# =========================================================
+
+EVENTOS_RECRUTAMENTO_FILE = DATA_DIR / "recrutamento_eventos.json"
+_eventos_recrutamento_lock = threading.Lock()
+
+EVENTOS_RECRUTAMENTO_SECRET = os.getenv("EVENTOS_RECRUTAMENTO_SECRET", "").strip()
+EVENTOS_FORMS_URL = "https://forms.gle/ZVhPQhdVZ6B3S25E9"
+EVENTOS_REFAZER_HORAS = 24
+
+
+def recrutamento_eventos_vazio():
+    return {
+        "versao": 2,
+        "candidaturas": {},
+        "cooldowns": {},
+        "config": {
+            "prefill_script_url": "",
+        },
+    }
+
+
+def _salvar_recrutamento_eventos_sem_lock(dados):
+    temporario = EVENTOS_RECRUTAMENTO_FILE.with_suffix(".tmp")
+    with temporario.open("w", encoding="utf-8") as arquivo:
+        json.dump(dados, arquivo, ensure_ascii=False, indent=2)
+    temporario.replace(EVENTOS_RECRUTAMENTO_FILE)
+
+
+def carregar_recrutamento_eventos():
+    with _eventos_recrutamento_lock:
+        if not EVENTOS_RECRUTAMENTO_FILE.exists():
+            _salvar_recrutamento_eventos_sem_lock(recrutamento_eventos_vazio())
+
+        try:
+            with EVENTOS_RECRUTAMENTO_FILE.open("r", encoding="utf-8") as arquivo:
+                dados = json.load(arquivo)
+        except (OSError, json.JSONDecodeError):
+            dados = recrutamento_eventos_vazio()
+
+        if not isinstance(dados, dict):
+            dados = recrutamento_eventos_vazio()
+        if not isinstance(dados.get("candidaturas"), dict):
+            dados["candidaturas"] = {}
+        if not isinstance(dados.get("cooldowns"), dict):
+            dados["cooldowns"] = {}
+        if not isinstance(dados.get("config"), dict):
+            dados["config"] = {}
+        dados["config"].setdefault("prefill_script_url", "")
+        dados.setdefault("versao", 2)
+        return dados
+
+
+def salvar_recrutamento_eventos(dados):
+    with _eventos_recrutamento_lock:
+        _salvar_recrutamento_eventos_sem_lock(dados)
+
+
+def _agora_utc_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso_utc(valor):
+    try:
+        dt = datetime.fromisoformat(str(valor or "").replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _segundos_restantes_cooldown(valor):
+    fim = _parse_iso_utc(valor)
+    if fim is None:
+        return 0
+    return max(0, int((fim - datetime.now(timezone.utc)).total_seconds()))
+
+
+def _gerar_codigo_candidatura(dados):
+    for _ in range(30):
+        codigo = "RM-EVT-" + secrets.token_hex(3).upper()
+        if codigo not in dados.get("candidaturas", {}):
+            return codigo
+    raise RuntimeError("Não foi possível gerar um código de candidatura único.")
+
+
+def _autorizado_recrutamento_eventos(payload=None):
+    segredo = request.headers.get("X-Eventos-Secret", "").strip()
+    if not segredo and isinstance(payload, dict):
+        segredo = str(payload.get("secret") or "").strip()
+    return bool(
+        EVENTOS_RECRUTAMENTO_SECRET
+        and segredo
+        and secrets.compare_digest(segredo, EVENTOS_RECRUTAMENTO_SECRET)
+    )
+
+
+def _candidatura_por_canal(dados, canal_id):
+    canal_id = str(canal_id or "").strip()
+    for candidatura in dados.get("candidaturas", {}).values():
+        if str(candidatura.get("discord_channel_id") or "") == canal_id:
+            return candidatura
+    return None
 
 IA_CONFIG_PADRAO = {
     "ativa": True,
@@ -2671,7 +2778,353 @@ def api_ia_config():
     return jsonify(resposta)
 
 
-@app.route("/status")
+# =========================================================
+# LINK PÚBLICO — PROVA COM CÓDIGO PRÉ-PREENCHIDO
+# =========================================================
+
+
+@app.route("/recrutamento/eventos/abrir-prova/<codigo>")
+def recrutamento_eventos_abrir_prova(codigo):
+    codigo = str(codigo or "").strip().upper()
+    if not re.fullmatch(r"RM-EVT-[A-F0-9]{6}", codigo):
+        return (
+            "Código de candidatura inválido.",
+            400,
+        )
+
+    dados = carregar_recrutamento_eventos()
+    candidatura = dados.get("candidaturas", {}).get(codigo)
+    if not candidatura:
+        return (
+            "Esta candidatura não existe ou expirou.",
+            404,
+        )
+
+    if candidatura.get("status") not in {
+        "aguardando_prova",
+        "prova_recebida",
+    }:
+        return (
+            "Esta candidatura já avançou para outra etapa.",
+            409,
+        )
+
+    script_url = str(
+        (dados.get("config") or {}).get("prefill_script_url")
+        or ""
+    ).strip()
+    if not script_url:
+        # Fallback seguro enquanto o Apps Script ainda não foi registrado.
+        # O candidato ainda consegue abrir o Forms e possui o código no Discord.
+        return redirect(EVENTOS_FORMS_URL)
+
+    separador = "&" if "?" in script_url else "?"
+    destino = f"{script_url}{separador}codigo={codigo}"
+    return redirect(destino)
+
+
+# =========================================================
+# API — RECRUTAMENTO DO DEPARTAMENTO DE EVENTOS
+# =========================================================
+
+
+@app.route(
+    "/api/recrutamento/eventos/configurar-prefill",
+    methods=["POST"],
+)
+def api_eventos_configurar_prefill():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_recrutamento_eventos(payload):
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    script_url = str(payload.get("prefill_script_url") or "").strip()
+    if not (
+        script_url.startswith("https://script.google.com/macros/s/")
+        and "/exec" in script_url
+    ):
+        return jsonify({
+            "ok": False,
+            "erro": "URL do Web App do Apps Script inválida.",
+        }), 400
+
+    dados = carregar_recrutamento_eventos()
+    dados.setdefault("config", {})["prefill_script_url"] = script_url
+    salvar_recrutamento_eventos(dados)
+    return jsonify({
+        "ok": True,
+        "prefill_script_url": script_url,
+    })
+
+
+@app.route(
+    "/api/recrutamento/eventos/candidatura",
+    methods=["POST"],
+)
+def api_eventos_criar_candidatura():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_recrutamento_eventos(payload):
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    discord_id = str(payload.get("discord_id") or "").strip()
+    discord_nome = str(payload.get("discord_nome") or "").strip()[:120]
+    if not discord_id.isdigit():
+        return jsonify({
+            "ok": False,
+            "erro": "Discord ID inválido.",
+        }), 400
+
+    dados = carregar_recrutamento_eventos()
+    cooldown = dados.get("cooldowns", {}).get(discord_id, "")
+    restantes = _segundos_restantes_cooldown(cooldown)
+    if restantes > 0:
+        return jsonify({
+            "ok": False,
+            "erro": "cooldown",
+            "segundos_restantes": restantes,
+            "cooldown_ate": cooldown,
+        }), 429
+
+    for candidatura in dados.get("candidaturas", {}).values():
+        if str(candidatura.get("discord_id")) != discord_id:
+            continue
+        if candidatura.get("status") in {
+            "aguardando_prova",
+            "prova_recebida",
+            "em_avaliacao",
+            "em_call",
+        }:
+            return jsonify({
+                "ok": True,
+                "codigo": candidatura.get("codigo"),
+                "reutilizada": True,
+                "status": candidatura.get("status"),
+            })
+
+    codigo = _gerar_codigo_candidatura(dados)
+    candidatura = {
+        "codigo": codigo,
+        "discord_id": discord_id,
+        "discord_nome": discord_nome,
+        "criado_em": _agora_utc_iso(),
+        "status": "aguardando_prova",
+        "respostas": [],
+        "prova_recebida_em": "",
+        "discord_channel_id": "",
+        "voice_channel_id": "",
+        "avaliador_id": "",
+        "avaliador_nome": "",
+        "resultado_em": "",
+    }
+    dados.setdefault("candidaturas", {})[codigo] = candidatura
+    salvar_recrutamento_eventos(dados)
+    return jsonify({
+        "ok": True,
+        "codigo": codigo,
+        "reutilizada": False,
+    })
+
+
+@app.route(
+    "/api/recrutamento/eventos/prova",
+    methods=["POST"],
+)
+def api_eventos_receber_prova():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_recrutamento_eventos(payload):
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    codigo = str(payload.get("codigo") or "").strip().upper()
+    respostas = payload.get("respostas") or []
+    if not codigo:
+        return jsonify({
+            "ok": False,
+            "erro": "Código da candidatura ausente.",
+        }), 400
+    if not isinstance(respostas, list) or not respostas:
+        return jsonify({
+            "ok": False,
+            "erro": "Nenhuma resposta recebida.",
+        }), 400
+
+    dados = carregar_recrutamento_eventos()
+    candidatura = dados.get("candidaturas", {}).get(codigo)
+    if not candidatura:
+        return jsonify({
+            "ok": False,
+            "erro": "Código de candidatura inválido.",
+        }), 404
+
+    if candidatura.get("status") not in {
+        "aguardando_prova",
+        "prova_recebida",
+    }:
+        return jsonify({
+            "ok": False,
+            "erro": "Esta candidatura não aceita uma nova prova.",
+        }), 409
+
+    respostas_limpas = []
+    for item in respostas[:100]:
+        if not isinstance(item, dict):
+            continue
+        pergunta = str(item.get("pergunta") or "").strip()[:1000]
+        resposta = str(item.get("resposta") or "").strip()[:5000]
+        if pergunta:
+            respostas_limpas.append({
+                "pergunta": pergunta,
+                "resposta": resposta,
+            })
+
+    if not respostas_limpas:
+        return jsonify({
+            "ok": False,
+            "erro": "Respostas inválidas.",
+        }), 400
+
+    candidatura["respostas"] = respostas_limpas
+    candidatura["prova_recebida_em"] = str(
+        payload.get("enviado_em") or _agora_utc_iso()
+    )
+    candidatura["status"] = "prova_recebida"
+    candidatura["discord_channel_id"] = ""
+    salvar_recrutamento_eventos(dados)
+    return jsonify({"ok": True, "codigo": codigo})
+
+
+@app.route("/api/recrutamento/eventos/pendentes")
+def api_eventos_provas_pendentes():
+    if not _autorizado_recrutamento_eventos():
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    dados = carregar_recrutamento_eventos()
+    pendentes = [
+        candidatura
+        for candidatura in dados.get("candidaturas", {}).values()
+        if candidatura.get("status") == "prova_recebida"
+        and not candidatura.get("discord_channel_id")
+    ][:20]
+    return jsonify({
+        "ok": True,
+        "candidaturas": pendentes,
+    })
+
+
+@app.route(
+    "/api/recrutamento/eventos/entregue",
+    methods=["POST"],
+)
+def api_eventos_marcar_entregue():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_recrutamento_eventos(payload):
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    codigo = str(payload.get("codigo") or "").strip().upper()
+    canal_id = str(
+        payload.get("discord_channel_id") or ""
+    ).strip()
+    dados = carregar_recrutamento_eventos()
+    candidatura = dados.get("candidaturas", {}).get(codigo)
+    if not candidatura:
+        return jsonify({
+            "ok": False,
+            "erro": "Candidatura não encontrada.",
+        }), 404
+
+    candidatura["discord_channel_id"] = canal_id
+    candidatura["status"] = "em_avaliacao"
+    salvar_recrutamento_eventos(dados)
+    return jsonify({"ok": True})
+
+
+@app.route(
+    "/api/recrutamento/eventos/por-canal/<canal_id>"
+)
+def api_eventos_por_canal(canal_id):
+    if not _autorizado_recrutamento_eventos():
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    dados = carregar_recrutamento_eventos()
+    candidatura = _candidatura_por_canal(dados, canal_id)
+    if not candidatura:
+        return jsonify({
+            "ok": False,
+            "erro": "Candidatura não encontrada.",
+        }), 404
+    return jsonify({
+        "ok": True,
+        "candidatura": candidatura,
+    })
+
+
+@app.route(
+    "/api/recrutamento/eventos/status",
+    methods=["POST"],
+)
+def api_eventos_atualizar_status():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_recrutamento_eventos(payload):
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    codigo = str(payload.get("codigo") or "").strip().upper()
+    novo_status = str(payload.get("status") or "").strip()
+    permitidos = {
+        "em_avaliacao",
+        "em_call",
+        "aprovado",
+        "reprovado",
+        "encerrado",
+    }
+    if novo_status not in permitidos:
+        return jsonify({
+            "ok": False,
+            "erro": "Status inválido.",
+        }), 400
+
+    dados = carregar_recrutamento_eventos()
+    candidatura = dados.get("candidaturas", {}).get(codigo)
+    if not candidatura:
+        return jsonify({
+            "ok": False,
+            "erro": "Candidatura não encontrada.",
+        }), 404
+
+    candidatura["status"] = novo_status
+    candidatura["avaliador_id"] = str(
+        payload.get("avaliador_id")
+        or candidatura.get("avaliador_id")
+        or ""
+    )
+    candidatura["avaliador_nome"] = str(
+        payload.get("avaliador_nome")
+        or candidatura.get("avaliador_nome")
+        or ""
+    )[:120]
+    candidatura["resultado_em"] = _agora_utc_iso()
+
+    if payload.get("voice_channel_id") is not None:
+        candidatura["voice_channel_id"] = str(
+            payload.get("voice_channel_id") or ""
+        )
+
+    if novo_status == "reprovado":
+        fim = (
+            datetime.now(timezone.utc)
+            + timedelta(hours=EVENTOS_REFAZER_HORAS)
+        )
+        dados.setdefault("cooldowns", {})[
+            str(candidatura.get("discord_id"))
+        ] = fim.isoformat()
+    elif novo_status == "aprovado":
+        dados.setdefault("cooldowns", {}).pop(
+            str(candidatura.get("discord_id")),
+            None,
+        )
+
+    salvar_recrutamento_eventos(dados)
+    return jsonify({
+        "ok": True,
+        "candidatura": candidatura,
+    })
 def status():
     dados = carregar_menus()
 
