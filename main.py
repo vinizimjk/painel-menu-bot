@@ -8,6 +8,7 @@ import secrets
 import urllib.parse
 import urllib.request
 import urllib.error
+import unicodedata
 from copy import deepcopy
 from pathlib import Path
 from functools import wraps
@@ -15,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 
 import discord
 from discord.ext import commands
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, render_template_string, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # =========================================================
@@ -611,6 +612,7 @@ async def on_ready():
         await atualizar_cache_convites(guild)
 
     registrar_views_persistentes()
+    registrar_views_estruturas_persistentes()
 
     if getattr(bot, "_menu_sync_feito", False):
         print(f"Bot conectado como {bot.user}")
@@ -643,6 +645,710 @@ def iniciar_bot():
 
 
 # =========================================================
+# CONSTRUTOR DE ESTRUTURAS / CATEGORIAS DO DISCORD
+# =========================================================
+
+ESTILOS_ESTRUTURA = {
+    "rm": "Resenha Máxima — 𝑬𝑽𝑬𝑵𝑻𝑶𝑺",
+    "negrito": "Negrito — 𝐄𝐕𝐄𝐍𝐓𝐎𝐒",
+    "normal": "Normal — EVENTOS",
+}
+
+_ASCII_MAIUSCULO = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_ASCII_MINUSCULO = "abcdefghijklmnopqrstuvwxyz"
+_MAT_BOLD_MAIUSCULO = "𝐀𝐁𝐂𝐃𝐄𝐅𝐆𝐇𝐈𝐉𝐊𝐋𝐌𝐍𝐎𝐏𝐐𝐑𝐒𝐓𝐔𝐕𝐖𝐗𝐘𝐙"
+_MAT_BOLD_MINUSCULO = "𝐚𝐛𝐜𝐝𝐞𝐟𝐠𝐡𝐢𝐣𝐤𝐥𝐦𝐧𝐨𝐩𝐪𝐫𝐬𝐭𝐮𝐯𝐰𝐱𝐲𝐳"
+_MAT_BOLD_ITALIC_MAIUSCULO = "𝑨𝑩𝑪𝑫𝑬𝑭𝑮𝑯𝑰𝑱𝑲𝑳𝑴𝑵𝑶𝑷𝑸𝑹𝑺𝑻𝑼𝑽𝑾𝑿𝒀𝒁"
+_MAT_BOLD_ITALIC_MINUSCULO = "𝒂𝒃𝒄𝒅𝒆𝒇𝒈𝒉𝒊𝒋𝒌𝒍𝒎𝒏𝒐𝒑𝒒𝒓𝒔𝒕𝒖𝒗𝒘𝒙𝒚𝒛"
+
+_MAPA_FONTES = {
+    "negrito": str.maketrans(
+        _ASCII_MAIUSCULO + _ASCII_MINUSCULO,
+        _MAT_BOLD_MAIUSCULO + _MAT_BOLD_MINUSCULO,
+    ),
+    "rm": str.maketrans(
+        _ASCII_MAIUSCULO + _ASCII_MINUSCULO,
+        _MAT_BOLD_ITALIC_MAIUSCULO + _MAT_BOLD_ITALIC_MINUSCULO,
+    ),
+}
+
+
+def _estrutura_vazia():
+    return {"versao": 1, "estruturas": {}}
+
+
+def _salvar_estruturas_sem_lock(dados):
+    temporario = ESTRUTURAS_DISCORD_FILE.with_suffix(".tmp")
+    with temporario.open("w", encoding="utf-8") as arquivo:
+        json.dump(dados, arquivo, ensure_ascii=False, indent=2)
+    temporario.replace(ESTRUTURAS_DISCORD_FILE)
+
+
+def carregar_estruturas_discord():
+    with _estruturas_discord_lock:
+        if not ESTRUTURAS_DISCORD_FILE.exists():
+            _salvar_estruturas_sem_lock(_estrutura_vazia())
+        try:
+            with ESTRUTURAS_DISCORD_FILE.open("r", encoding="utf-8") as arquivo:
+                dados = json.load(arquivo)
+        except (OSError, json.JSONDecodeError):
+            dados = _estrutura_vazia()
+            _salvar_estruturas_sem_lock(dados)
+        if not isinstance(dados, dict):
+            dados = _estrutura_vazia()
+        if not isinstance(dados.get("estruturas"), dict):
+            dados["estruturas"] = {}
+        return dados
+
+
+def salvar_estruturas_discord(dados):
+    with _estruturas_discord_lock:
+        _salvar_estruturas_sem_lock(dados)
+
+
+def _sem_acentos(texto):
+    normalizado = unicodedata.normalize("NFKD", str(texto or ""))
+    return "".join(ch for ch in normalizado if not unicodedata.combining(ch))
+
+
+def estilizar_nome_estrutura(texto, estilo="rm"):
+    texto = _sem_acentos(texto).strip()
+    texto = re.sub(r"\s+", "-", texto)
+    texto = re.sub(r"-{2,}", "-", texto)
+    if estilo in _MAPA_FONTES:
+        texto = texto.upper().translate(_MAPA_FONTES[estilo])
+    elif estilo == "normal":
+        texto = texto.upper()
+    return texto[:90]
+
+
+def _nome_com_emoji(emoji, texto, estilo="rm"):
+    nome = estilizar_nome_estrutura(texto, estilo)
+    return f"{emoji}・{nome}"[:100]
+
+
+def _ids_cargos(texto):
+    ids = []
+    for achado in re.findall(r"\d{15,22}", str(texto or "")):
+        valor = int(achado)
+        if valor not in ids:
+            ids.append(valor)
+    return ids
+
+
+def _estrutura_por_categoria(categoria_id):
+    dados = carregar_estruturas_discord()
+    return dados.get("estruturas", {}).get(str(categoria_id))
+
+
+def _membro_admin_estrutura(membro, estrutura):
+    if not isinstance(membro, discord.Member):
+        return False
+    if membro.id == DONO_ID or membro.guild_permissions.administrator:
+        return True
+    permitidos = {
+        int(x)
+        for x in estrutura.get("admin_role_ids", [])
+        if str(x).isdigit()
+    }
+    return any(role.id in permitidos for role in membro.roles)
+
+
+class HierarquiaEstruturaView(discord.ui.View):
+    def __init__(self, categoria_id):
+        super().__init__(timeout=None)
+        self.categoria_id = str(categoria_id)
+        botao = discord.ui.Button(
+            label="Gerenciar Hierarquia",
+            emoji="⚙️",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"rm_estrutura_hierarquia:{self.categoria_id}",
+        )
+        botao.callback = self._abrir
+        self.add_item(botao)
+
+    async def _abrir(self, interaction: discord.Interaction):
+        estrutura = _estrutura_por_categoria(self.categoria_id)
+        if not estrutura:
+            await interaction.response.send_message(
+                "❌ Esta estrutura não está mais registrada no painel.",
+                ephemeral=True,
+            )
+            return
+        if not _membro_admin_estrutura(interaction.user, estrutura):
+            await interaction.response.send_message(
+                "❌ Apenas os administradores configurados podem usar este painel.",
+                ephemeral=True,
+            )
+            return
+        admins = (
+            ", ".join(
+                f"<@&{x}>"
+                for x in estrutura.get("admin_role_ids", [])
+            )
+            or "Somente administradores do servidor"
+        )
+        await interaction.response.send_message(
+            "## 👑 Painel da Hierarquia\n\n"
+            "Este canal foi preparado para comandos administrativos da hierarquia.\n"
+            f"**Cargos autorizados:** {admins}\n\n"
+            "Os membros do departamento podem visualizar o histórico, "
+            "mas não enviar mensagens aqui.",
+            ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+
+def registrar_views_estruturas_persistentes():
+    if getattr(bot, "_views_estruturas_registradas", False):
+        return
+    dados = carregar_estruturas_discord()
+    total = 0
+    for categoria_id in dados.get("estruturas", {}):
+        try:
+            bot.add_view(HierarquiaEstruturaView(categoria_id))
+            total += 1
+        except Exception as erro:
+            print(
+                f"Erro ao registrar view de estrutura "
+                f"{categoria_id}: {erro}"
+            )
+    bot._views_estruturas_registradas = True
+    print(f"Views de estruturas registradas: {total}")
+
+
+def _role_obrigatorio(guild, role_id, rotulo):
+    try:
+        role_id = int(role_id)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"ID inválido em {rotulo}.") from exc
+    role = guild.get_role(role_id)
+    if role is None:
+        raise RuntimeError(
+            f"Não encontrei o cargo de {rotulo} ({role_id}) no servidor."
+        )
+    return role
+
+
+def _roles_lista(guild, ids, rotulo):
+    roles = []
+    for role_id in ids:
+        role = guild.get_role(int(role_id))
+        if role is None:
+            raise RuntimeError(
+                f"Não encontrei um dos cargos de {rotulo}: {role_id}."
+            )
+        if role not in roles:
+            roles.append(role)
+    return roles
+
+
+def _overwrite_base(*, enviar=None):
+    return discord.PermissionOverwrite(
+        view_channel=True,
+        read_message_history=True,
+        send_messages=enviar,
+    )
+
+
+def _montar_overwrites_canal(
+    guild,
+    departamento,
+    supervisores,
+    admins,
+    enviar_departamento,
+    enviar_supervisor,
+):
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        departamento: _overwrite_base(enviar=enviar_departamento),
+    }
+    for role in supervisores:
+        overwrites[role] = _overwrite_base(enviar=enviar_supervisor)
+    for role in admins:
+        overwrites[role] = _overwrite_base(enviar=True)
+    dono = guild.get_member(DONO_ID)
+    if dono is not None:
+        overwrites[dono] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+            send_messages=True,
+            manage_messages=True,
+        )
+    eu = guild.me
+    if eu is not None:
+        overwrites[eu] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+            send_messages=True,
+            manage_messages=True,
+        )
+    return overwrites
+
+
+def _montar_overwrites_categoria(
+    guild,
+    departamento,
+    supervisores,
+    admins,
+):
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        departamento: discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+        ),
+    }
+    for role in supervisores:
+        overwrites[role] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+        )
+    for role in admins:
+        overwrites[role] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+        )
+    dono = guild.get_member(DONO_ID)
+    if dono is not None:
+        overwrites[dono] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+        )
+    eu = guild.me
+    if eu is not None:
+        overwrites[eu] = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+        )
+    return overwrites
+
+
+async def criar_estrutura_eventos_discord(config):
+    guild = obter_guild_painel()
+    if guild is None:
+        raise RuntimeError(
+            "O bot do painel ainda não está conectado ao servidor."
+        )
+    eu = guild.me
+    if (
+        eu is None
+        or not eu.guild_permissions.manage_channels
+        or not eu.guild_permissions.manage_roles
+    ):
+        raise RuntimeError(
+            "O bot precisa das permissões Gerenciar Canais e "
+            "Gerenciar Cargos para criar a estrutura e aplicar "
+            "as permissões dos canais."
+        )
+
+    departamento = _role_obrigatorio(
+        guild,
+        config["departamento_role_id"],
+        "Departamento de Eventos",
+    )
+    supervisores = _roles_lista(
+        guild,
+        config.get("supervisor_role_ids", []),
+        "Supervisor+",
+    )
+    admins = _roles_lista(
+        guild,
+        config.get("admin_role_ids", []),
+        "ADM",
+    )
+    estilo = config.get("estilo", "rm")
+
+    categoria_nome = _nome_com_emoji(
+        "📅",
+        config.get("categoria_nome") or "Eventos",
+        estilo,
+    )
+    categoria = await guild.create_category(
+        categoria_nome,
+        overwrites=_montar_overwrites_categoria(
+            guild,
+            departamento,
+            supervisores,
+            admins,
+        ),
+        reason="Resenha Máxima | estrutura criada pelo painel web",
+    )
+
+    canais = {}
+    especificacoes = [
+        (
+            "chat",
+            "💬",
+            config.get("chat_nome") or "chat",
+            True,
+            True,
+        ),
+        (
+            "anuncios",
+            "📢",
+            config.get("anuncios_nome") or "anuncios",
+            False,
+            True,
+        ),
+        (
+            "sugestoes",
+            "💡",
+            config.get("sugestoes_nome") or "sugestoes",
+            True,
+            True,
+        ),
+        (
+            "hierarquia",
+            "👑",
+            config.get("hierarquia_nome") or "hierarquia",
+            False,
+            False,
+        ),
+    ]
+
+    try:
+        for (
+            chave,
+            emoji,
+            nome_base,
+            enviar_dep,
+            enviar_sup,
+        ) in especificacoes:
+            canal = await guild.create_text_channel(
+                _nome_com_emoji(
+                    emoji,
+                    nome_base,
+                    estilo,
+                ),
+                category=categoria,
+                overwrites=_montar_overwrites_canal(
+                    guild,
+                    departamento,
+                    supervisores,
+                    admins,
+                    enviar_dep,
+                    enviar_sup,
+                ),
+                reason=(
+                    "Resenha Máxima | estrutura criada pelo painel web"
+                ),
+            )
+            canais[chave] = canal
+
+        await canais["chat"].send(
+            "## 💬 Chat do Departamento de Eventos\n"
+            "Canal interno para comunicação da equipe."
+        )
+        await canais["anuncios"].send(
+            "## 📢 Anúncios do Departamento de Eventos\n"
+            "Os membros podem **ver e ler o histórico**. "
+            "Apenas os cargos **Supervisor+** e **ADM** "
+            "configurados podem publicar."
+        )
+        await canais["sugestoes"].send(
+            "## 💡 Sugestões\n"
+            "Use este canal para ideias, melhorias e propostas "
+            "do Departamento de Eventos."
+        )
+
+        registro = {
+            "categoria_id": str(categoria.id),
+            "categoria_nome": categoria.name,
+            "departamento_role_id": str(departamento.id),
+            "supervisor_role_ids": [
+                str(r.id)
+                for r in supervisores
+            ],
+            "admin_role_ids": [
+                str(r.id)
+                for r in admins
+            ],
+            "canais": {
+                chave: str(canal.id)
+                for chave, canal in canais.items()
+            },
+            "estilo": estilo,
+            "criado_em": agora_iso(),
+        }
+        dados = carregar_estruturas_discord()
+        dados.setdefault("estruturas", {})[
+            str(categoria.id)
+        ] = registro
+        salvar_estruturas_discord(dados)
+
+        await canais["hierarquia"].send(
+            "## 👑 Hierarquia do Departamento de Eventos\n\n"
+            "Este canal é visível para o departamento, com "
+            "**Ler histórico de mensagens** habilitado.\n"
+            "Somente os **ADMs configurados** podem enviar "
+            "mensagens/comandos aqui.\n\n"
+            "Use o botão abaixo para consultar o painel da hierarquia.",
+            view=HierarquiaEstruturaView(categoria.id),
+        )
+        return registro
+    except Exception:
+        try:
+            for canal in list(canais.values()):
+                try:
+                    await canal.delete(
+                        reason=(
+                            "Rollback: falha ao criar estrutura pelo painel"
+                        )
+                    )
+                except Exception:
+                    pass
+            await categoria.delete(
+                reason="Rollback: falha ao criar estrutura pelo painel"
+            )
+        except Exception:
+            pass
+        raise
+
+
+def _sugestoes_locais_estrutura(tema="eventos"):
+    tema_limpo = _sem_acentos(tema).casefold()
+    if "evento" in tema_limpo:
+        return {
+            "categoria": "central de eventos",
+            "chat": "chat da equipe",
+            "anuncios": "comunicados",
+            "sugestoes": "sugestoes",
+            "hierarquia": "hierarquia",
+        }
+    return {
+        "categoria": tema_limpo or "departamento",
+        "chat": "chat da equipe",
+        "anuncios": "anuncios",
+        "sugestoes": "sugestoes",
+        "hierarquia": "hierarquia",
+    }
+
+
+def sugerir_nomes_estrutura_ia(tema):
+    fallback = _sugestoes_locais_estrutura(tema)
+    chave = os.getenv("GROQ_API_KEY", "").strip()
+    if not chave:
+        return (
+            fallback,
+            "preset local (GROQ_API_KEY não configurada no SITE)",
+        )
+
+    prompt = (
+        "Você cria nomes curtos de canais para um servidor Discord "
+        "brasileiro chamado Resenha Máxima. Retorne SOMENTE JSON "
+        "válido, sem markdown, com as chaves categoria, chat, anuncios, "
+        "sugestoes, hierarquia. Os nomes devem ser curtos, administrativos "
+        "e combinar entre si. Não use emojis nem fontes unicode; o painel "
+        "aplicará a fonte depois. Tema: "
+        + str(tema or "Departamento de Eventos")
+    )
+    payload = json.dumps(
+        {
+            "model": os.getenv(
+                "GROQ_SITE_MODEL",
+                "llama-3.1-8b-instant",
+            ),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            "temperature": 0.8,
+            "max_completion_tokens": 220,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.groq.com/openai/v1/chat/completions",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {chave}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(
+            req,
+            timeout=12,
+        ) as resposta:
+            bruto = json.loads(
+                resposta.read().decode("utf-8")
+            )
+        conteudo = bruto[
+            "choices"
+        ][0]["message"]["content"].strip()
+        match = re.search(r"\{.*\}", conteudo, re.S)
+        if match:
+            dados = json.loads(match.group(0))
+            saida = {}
+            for chave_nome in (
+                "categoria",
+                "chat",
+                "anuncios",
+                "sugestoes",
+                "hierarquia",
+            ):
+                valor = str(
+                    dados.get(chave_nome)
+                    or fallback[chave_nome]
+                ).strip()[:50]
+                saida[chave_nome] = valor
+            return saida, "IA Groq"
+    except Exception as erro:
+        print(
+            "Sugestão de nomes por IA indisponível: "
+            f"{erro!r}"
+        )
+
+    return fallback, "preset local (fallback da IA)"
+
+
+ESTRUTURAS_HTML = r"""<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resenha Máxima • Construtor de Categorias</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101114;--card:#181a1f;--card2:#20232a;--text:#f4f4f5;--muted:#a4a7ae;--gold:#d4af37;--line:#30343d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,Segoe UI,sans-serif}a{color:inherit}.top{position:sticky;top:0;z-index:5;background:#121318;border-bottom:1px solid var(--line);padding:14px 24px;display:flex;justify-content:space-between;align-items:center}.brand{font-weight:900;letter-spacing:.06em}.brand span{color:var(--gold)}.wrap{max-width:1180px;margin:28px auto;padding:0 18px 60px}.hero{padding:24px;border:1px solid #4a4020;background:linear-gradient(135deg,#1d1a10,#181a1f);border-radius:18px;margin-bottom:20px}.hero h1{margin:4px 0 8px;font-size:28px}.hero p{color:var(--muted);margin:0}.tag{display:inline-block;color:var(--gold);font-weight:800;font-size:12px;letter-spacing:.08em}.grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);gap:18px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin-bottom:18px}.card h2{margin:0 0 6px}.muted{color:var(--muted)}label{display:block;font-weight:700;margin:14px 0 6px}input,select{width:100%;background:#111318;border:1px solid #383d47;color:var(--text);border-radius:10px;padding:11px 12px;outline:none}input:focus,select:focus{border-color:var(--gold)}.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}button,.btn{border:0;border-radius:10px;padding:11px 15px;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:7px}.primary{background:var(--gold);color:#17130a}.secondary{background:#2b2f37;color:var(--text);border:1px solid #414650}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.notice{padding:12px 14px;border-radius:10px;margin:12px 0;background:#20251e;border:1px solid #3e5d40}.preview{background:#111318;border:1px solid var(--line);padding:15px;border-radius:13px}.preview .cat{font-weight:900;color:var(--gold);margin-bottom:9px}.channel{padding:7px 9px;border-radius:8px;background:#1d2026;margin:6px 0}.perm{font-size:13px;color:var(--muted);margin-top:10px}.history{display:grid;gap:10px}.item{background:#111318;border:1px solid var(--line);border-radius:12px;padding:13px}.item strong{color:var(--gold)}.status{font-size:13px;margin-top:8px;color:var(--muted)}@media(max-width:820px){.grid{grid-template-columns:1fr}.two{grid-template-columns:1fr}.top{padding:12px 15px}.wrap{margin-top:18px}}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="brand">RESENHA <span>MÁXIMA</span> • Estruturas</div>
+    <div><a class="btn secondary" href="{{ url_for('painel') }}">← Voltar ao painel</a></div>
+  </div>
+  <main class="wrap">
+    <section class="hero">
+      <span class="tag">CONSTRUTOR DE CATEGORIAS</span>
+      <h1>🏗️ Estruturas do Discord</h1>
+      <p>Crie uma categoria completa com canais, fontes e permissões específicas sem configurar tudo manualmente.</p>
+    </section>
+    {% with messages = get_flashed_messages() %}
+      {% for message in messages %}<div class="notice">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    <div class="grid">
+      <div>
+        <form class="card" method="post" action="{{ url_for('criar_estrutura_eventos') }}" id="estrutura-form">
+          <h2>📅 Categoria de Eventos</h2>
+          <p class="muted">Cria chat, anúncios, sugestões e hierarquia. Todo cargo que pode visualizar recebe automaticamente <b>Ver canal + Ler histórico de mensagens</b>.</p>
+          <div class="two">
+            <div>
+              <label>Nome/tema da categoria</label>
+              <input id="categoria_nome" name="categoria_nome" value="central de eventos" maxlength="50" required>
+            </div>
+            <div>
+              <label>Estilo da fonte</label>
+              <select id="estilo" name="estilo">
+                {% for chave, nome in estilos.items() %}
+                  <option value="{{ chave }}" {% if chave == 'rm' %}selected{% endif %}>{{ nome }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <label>ID do cargo Departamento de Eventos</label>
+          <input name="departamento_role_id" placeholder="Ex.: 154..." inputmode="numeric" required>
+          <label>IDs dos cargos Supervisor+ que podem publicar anúncios</label>
+          <input name="supervisor_role_ids" placeholder="Separe por vírgula: 154..., 154...">
+          <label>IDs dos cargos ADM que podem escrever na hierarquia</label>
+          <input name="admin_role_ids" placeholder="Separe por vírgula: 154..., 154...">
+          <div class="card" style="padding:14px;margin-top:18px;background:var(--card2)">
+            <b>🔐 Regra automática de histórico</b>
+            <div class="muted">Se um cargo puder ver qualquer canal criado aqui, <b>Ler histórico de mensagens</b> será habilitado junto. Essa permissão não depende do campo de escrita.</div>
+          </div>
+          <h3>Nomes dos canais</h3>
+          <div class="two">
+            <div><label>Chat</label><input id="chat_nome" name="chat_nome" value="chat da equipe" required></div>
+            <div><label>Anúncios</label><input id="anuncios_nome" name="anuncios_nome" value="comunicados" required></div>
+          </div>
+          <div class="two">
+            <div><label>Sugestões</label><input id="sugestoes_nome" name="sugestoes_nome" value="sugestoes" required></div>
+            <div><label>Hierarquia</label><input id="hierarquia_nome" name="hierarquia_nome" value="hierarquia" required></div>
+          </div>
+          <div class="actions">
+            <button class="secondary" type="button" id="ia-nomes">✨ Sugerir nomes com IA</button>
+            <button class="primary" type="submit" onclick="return confirm('Criar esta categoria e os 4 canais no Discord?')">🚀 Criar no Discord</button>
+          </div>
+          <div id="ia-status" class="status"></div>
+        </form>
+      </div>
+      <aside>
+        <section class="card">
+          <h2>👁️ Prévia</h2>
+          <div class="preview">
+            <div class="cat" id="prev-cat">📅・CENTRAL-DE-EVENTOS</div>
+            <div class="channel" id="prev-chat">💬・CHAT-DA-EQUIPE</div>
+            <div class="channel" id="prev-anuncios">📢・COMUNICADOS</div>
+            <div class="channel" id="prev-sugestoes">💡・SUGESTOES</div>
+            <div class="channel" id="prev-hierarquia">👑・HIERARQUIA</div>
+            <div class="perm"><b>Anúncios:</b> Departamento vê + histórico; Supervisor+/ADM escreve.<br><b>Hierarquia:</b> Departamento vê + histórico; somente ADM escreve.</div>
+          </div>
+        </section>
+        <section class="card">
+          <h2>📚 Estruturas criadas</h2>
+          <div class="history">
+            {% if estruturas %}
+              {% for item in estruturas %}
+                <div class="item">
+                  <strong>{{ item.categoria_nome }}</strong><br>
+                  <span class="muted">Categoria: {{ item.categoria_id }}</span><br>
+                  <span class="muted">Criada: {{ item.criado_em }}</span>
+                </div>
+              {% endfor %}
+            {% else %}
+              <div class="muted">Nenhuma estrutura criada pelo painel ainda.</div>
+            {% endif %}
+          </div>
+        </section>
+      </aside>
+    </div>
+  </main>
+<script>
+(() => {
+  const qs = id => document.getElementById(id);
+  const clean = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, '-').toUpperCase();
+  function preview(){
+    qs('prev-cat').textContent='📅・'+clean(qs('categoria_nome').value);
+    qs('prev-chat').textContent='💬・'+clean(qs('chat_nome').value);
+    qs('prev-anuncios').textContent='📢・'+clean(qs('anuncios_nome').value);
+    qs('prev-sugestoes').textContent='💡・'+clean(qs('sugestoes_nome').value);
+    qs('prev-hierarquia').textContent='👑・'+clean(qs('hierarquia_nome').value);
+  }
+  ['categoria_nome','chat_nome','anuncios_nome','sugestoes_nome','hierarquia_nome','estilo'].forEach(id => qs(id).addEventListener('input', preview));
+  preview();
+  qs('ia-nomes').addEventListener('click', async () => {
+    const st = qs('ia-status');
+    st.textContent = 'Gerando sugestões...';
+    try {
+      const r = await fetch('{{ url_for("sugerir_nomes_estrutura") }}', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({tema:qs('categoria_nome').value})
+      });
+      const d = await r.json();
+      if(!r.ok) throw new Error(d.erro || 'Falha');
+      const n = d.nomes;
+      qs('categoria_nome').value=n.categoria;
+      qs('chat_nome').value=n.chat;
+      qs('anuncios_nome').value=n.anuncios;
+      qs('sugestoes_nome').value=n.sugestoes;
+      qs('hierarquia_nome').value=n.hierarquia;
+      preview();
+      st.textContent='✅ Sugestões: '+d.fonte;
+    } catch(e) {
+      st.textContent='❌ '+e.message;
+    }
+  });
+})();
+</script>
+</body>
+</html>"""
+
+
+# =========================================================
 # SITE / PAINEL WEB
 # =========================================================
 
@@ -667,6 +1373,10 @@ _ia_config_lock = threading.Lock()
 
 EVENTOS_RECRUTAMENTO_FILE = DATA_DIR / "recrutamento_eventos.json"
 _eventos_recrutamento_lock = threading.Lock()
+
+# Estruturas/categorias criadas pelo painel web.
+ESTRUTURAS_DISCORD_FILE = DATA_DIR / "estruturas_discord.json"
+_estruturas_discord_lock = threading.Lock()
 
 EVENTOS_RECRUTAMENTO_SECRET = os.getenv("EVENTOS_RECRUTAMENTO_SECRET", "").strip()
 EVENTOS_FORMS_URL = "https://forms.gle/ZVhPQhdVZ6B3S25E9"
@@ -2276,6 +2986,185 @@ def contexto_painel(
             CANAL_EVENTOS_ID
         ),
     }
+
+
+@app.after_request
+def _injetar_link_estruturas_no_painel(response):
+    """Adiciona o Construtor ao menu sem exigir troca do index.html atual."""
+    try:
+        if (
+            request.endpoint == "painel"
+            and acesso_total()
+            and response.content_type
+            and "text/html" in response.content_type
+        ):
+            html = response.get_data(as_text=True)
+            if (
+                "rm-link-estruturas" not in html
+                and "</nav>" in html
+            ):
+                link = (
+                    '<a id="rm-link-estruturas" '
+                    'class="panel-tab" href="/estruturas">'
+                    '🏗️ Estruturas</a>'
+                )
+                html = html.replace(
+                    "</nav>",
+                    link + "</nav>",
+                    1,
+                )
+                response.set_data(html)
+    except Exception as erro:
+        print(
+            "Não foi possível injetar link de Estruturas: "
+            f"{erro!r}"
+        )
+    return response
+
+
+@app.route("/estruturas", methods=["GET"])
+@login_obrigatorio
+@somente_full
+def estruturas_discord():
+    dados = carregar_estruturas_discord()
+    estruturas = list(
+        dados.get("estruturas", {}).values()
+    )
+    estruturas.sort(
+        key=lambda item: item.get("criado_em", ""),
+        reverse=True,
+    )
+    return render_template_string(
+        ESTRUTURAS_HTML,
+        estruturas=estruturas,
+        estilos=ESTILOS_ESTRUTURA,
+    )
+
+
+@app.route(
+    "/estruturas/sugerir-nomes",
+    methods=["POST"],
+)
+@login_obrigatorio
+@somente_full
+def sugerir_nomes_estrutura():
+    payload = request.get_json(silent=True) or {}
+    nomes, fonte = sugerir_nomes_estrutura_ia(
+        payload.get("tema")
+        or "Departamento de Eventos"
+    )
+    return jsonify({
+        "ok": True,
+        "nomes": nomes,
+        "fonte": fonte,
+    })
+
+
+@app.route(
+    "/estruturas/eventos/criar",
+    methods=["POST"],
+)
+@login_obrigatorio
+@somente_full
+def criar_estrutura_eventos():
+    if (
+        not TOKEN
+        or not bot.is_ready()
+        or BOT_LOOP is None
+    ):
+        flash(
+            "❌ O bot do SITE ainda não está "
+            "conectado ao Discord."
+        )
+        return redirect(
+            url_for("estruturas_discord")
+        )
+
+    departamento_ids = _ids_cargos(
+        request.form.get("departamento_role_id")
+    )
+    if len(departamento_ids) != 1:
+        flash(
+            "❌ Informe exatamente um ID para o cargo "
+            "Departamento de Eventos."
+        )
+        return redirect(
+            url_for("estruturas_discord")
+        )
+
+    estilo = request.form.get(
+        "estilo",
+        "rm",
+    )
+    if estilo not in ESTILOS_ESTRUTURA:
+        estilo = "rm"
+
+    config = {
+        "categoria_nome": request.form.get(
+            "categoria_nome",
+            "central de eventos",
+        ).strip(),
+        "chat_nome": request.form.get(
+            "chat_nome",
+            "chat da equipe",
+        ).strip(),
+        "anuncios_nome": request.form.get(
+            "anuncios_nome",
+            "comunicados",
+        ).strip(),
+        "sugestoes_nome": request.form.get(
+            "sugestoes_nome",
+            "sugestoes",
+        ).strip(),
+        "hierarquia_nome": request.form.get(
+            "hierarquia_nome",
+            "hierarquia",
+        ).strip(),
+        "estilo": estilo,
+        "departamento_role_id": departamento_ids[0],
+        "supervisor_role_ids": _ids_cargos(
+            request.form.get("supervisor_role_ids")
+        ),
+        "admin_role_ids": _ids_cargos(
+            request.form.get("admin_role_ids")
+        ),
+    }
+
+    if not config["admin_role_ids"]:
+        flash(
+            "❌ Informe pelo menos um cargo ADM "
+            "para o canal de hierarquia."
+        )
+        return redirect(
+            url_for("estruturas_discord")
+        )
+
+    try:
+        futuro = asyncio.run_coroutine_threadsafe(
+            criar_estrutura_eventos_discord(
+                config
+            ),
+            BOT_LOOP,
+        )
+        registro = futuro.result(timeout=35)
+        flash(
+            "✅ Estrutura criada no Discord. Categoria: "
+            f"{registro['categoria_nome']} "
+            f"({registro['categoria_id']})."
+        )
+    except Exception as erro:
+        print(
+            "Erro ao criar estrutura pelo painel: "
+            f"{erro!r}"
+        )
+        flash(
+            "❌ Não foi possível criar a estrutura: "
+            f"{erro}"
+        )
+
+    return redirect(
+        url_for("estruturas_discord")
+    )
 
 
 @app.route("/", methods=["GET", "POST"])
