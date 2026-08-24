@@ -1843,13 +1843,21 @@ FUTURAS_FRASES_FINAIS = [
 
 # Stickers já usados anteriormente pelo painel da Resenha Máxima.
 FUTURAS_STICKER_IDS = [
-    1534440607001477198,  # Posso ser admin?
-    1536827969350144091,
-    1532831592093978684,
-    1534440355393568859,
-    1536824358822092931,
-    1533118564456992908,
+    1534435954557845724,  # Sonic — "vish kkk"
+    1532830961283371179,  # "isso foi uma ameaça?"
+    1534435078413746306,  # boneca planejando algo
+    1534440284358705222,  # comemoração/troféu
+    1534440607001477198,  # "Posso ser admin?"
 ]
+
+
+FUTURAS_STICKERS_CONTEXTO = {
+    "demora": [1534435954557845724, 1532830961283371179],
+    "planejando": [1534435078413746306, 1534435954557845724],
+    "grande": [1534440284358705222, 1534435078413746306],
+    "admin": [1534440607001477198, 1534435954557845724],
+}
+
 
 
 def escolher_rodape_futuras(anteriores=None):
@@ -1861,13 +1869,22 @@ def escolher_rodape_futuras(anteriores=None):
         frase for frase in FUTURAS_FRASES_FINAIS
         if frase != frase_anterior
     ] or FUTURAS_FRASES_FINAIS
+    frase = random.choice(frases)
 
-    stickers = [
-        str(sticker_id) for sticker_id in FUTURAS_STICKER_IDS
-        if str(sticker_id) != sticker_anterior
-    ] or [str(sticker_id) for sticker_id in FUTURAS_STICKER_IDS]
+    normalizada = frase.casefold()
+    if any(x in normalizada for x in ("hexa", "gta", "feriado", "em breve", "esperando", "demora", "algum dia")):
+        grupo = "demora"
+    elif any(x in normalizada for x in ("inventando", "adicionar", "trabalhando", "compilando", "programador")):
+        grupo = "planejando"
+    elif any(x in normalizada for x in ("adm", "admin")):
+        grupo = "admin"
+    else:
+        grupo = "grande"
 
-    return random.choice(frases), random.choice(stickers)
+    candidatos = [str(x) for x in FUTURAS_STICKERS_CONTEXTO.get(grupo, FUTURAS_STICKER_IDS)]
+    candidatos = [x for x in candidatos if x != sticker_anterior] or candidatos
+    return frase, random.choice(candidatos)
+
 
 
 def _remover_titulo_futuras_existente(texto):
@@ -1893,9 +1910,10 @@ def _remover_titulo_futuras_existente(texto):
         .replace("ç", "c")
     )
 
-    if primeira.startswith("#") and (
-        "futuras atualizacoes" in normalizada
-        or "proximas atualizacoes" in normalizada
+    titulo_limpo = normalizada.lstrip("# ").strip().lstrip("🔮 ").strip()
+    if (
+        titulo_limpo.startswith("futuras atualizacoes")
+        or titulo_limpo.startswith("proximas atualizacoes")
     ):
         linhas = linhas[1:]
 
@@ -1904,7 +1922,7 @@ def _remover_titulo_futuras_existente(texto):
 
 def montar_texto_futuras(texto, frase_final):
     base = _remover_titulo_futuras_existente(texto)
-    partes = ["## Futuras atualizações"]
+    partes = ["# 🔮 Futuras atualizações"]
     if base:
         partes.append(base)
     partes.append(
@@ -1942,20 +1960,20 @@ def montar_texto_notas(texto):
 
         # Remove apenas um título geral antigo. Se a primeira linha já for
         # uma seção como "## 🆕 NOVIDADES", ela é preservada.
-        if primeira.startswith("#") and (
-            "nota" in normalizada
-            or "atualizacao" in normalizada
-            or primeira.startswith("# 📝")
+        titulo_geral = normalizada.lstrip("# ").strip().lstrip("📝 ").strip()
+        if (
+            "nota" in titulo_geral
+            or titulo_geral.startswith("atualizacao")
         ) and not any(
-            palavra in normalizada
+            palavra in titulo_geral
             for palavra in ("novidades", "correcoes", "alteracoes", "problemas")
         ):
             linhas = linhas[1:]
 
     corpo = "\n".join(linhas).strip()
     if corpo:
-        return "## Notas de atualização\n\n" + corpo
-    return "## Notas de atualização"
+        return "# Notas de atualização\n\n" + corpo
+    return "# Notas de atualização"
 
 
 def atualizacoes_vazias():
@@ -2191,6 +2209,51 @@ async def apagar_mensagens_por_ids(
         ):
             continue
 
+    return removidas
+
+
+async def apagar_futuras_por_varredura(canal, limite=300):
+    """Fallback: remove prévias antigas mesmo se o ID salvo no site tiver se perdido."""
+    try:
+        mensagens = [m async for m in canal.history(limit=limite)]
+    except (discord.Forbidden, discord.HTTPException):
+        return 0
+
+    bot_user = getattr(bot, "user", None)
+    if bot_user is None:
+        return 0
+
+    ids = set()
+    futuros = []
+    for msg in mensagens:
+        if msg.author.id != bot_user.id:
+            continue
+        primeira = str(msg.content or "").strip().splitlines()
+        primeira = primeira[0] if primeira else ""
+        norm = primeira.casefold().lstrip("# ").strip().lstrip("🔮 ").strip()
+        if norm.startswith("futuras atualizações") or norm.startswith("futuras atualizacoes") or norm.startswith("próximas atualizações") or norm.startswith("proximas atualizacoes"):
+            futuros.append(msg)
+            ids.add(msg.id)
+
+    # Sticker do rodapé: remove apenas quando foi enviado pelo bot logo após uma prévia detectada.
+    stickers_permitidos = {int(x) for x in FUTURAS_STICKER_IDS}
+    for previa in futuros:
+        for msg in mensagens:
+            if msg.author.id != bot_user.id or not msg.stickers:
+                continue
+            delta = (msg.created_at - previa.created_at).total_seconds()
+            if 0 <= delta <= 60 and any(int(s.id) in stickers_permitidos for s in msg.stickers):
+                ids.add(msg.id)
+
+    removidas = 0
+    for msg in mensagens:
+        if msg.id not in ids:
+            continue
+        try:
+            await msg.delete(reason="Limpeza de Futuras Atualizações duplicadas")
+            removidas += 1
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            pass
     return removidas
 
 
@@ -3557,6 +3620,11 @@ def publicar_atualizacoes_futuras():
                     f"{repr(erro)}"
                 )
 
+        # Fallback importante: se o volume/ID antigo se perdeu, limpa pelo próprio conteúdo do Discord.
+        executar_no_bot(
+            apagar_futuras_por_varredura(canal)
+        )
+
         frase_final, sticker_id = escolher_rodape_futuras(
             antigas
         )
@@ -3742,6 +3810,11 @@ def lancar_atualizacao():
                 canal,
                 notas
             )
+        )
+
+        # Remove qualquer prévia antiga pelo conteúdo, mesmo se o ID salvo tiver sido perdido.
+        executar_no_bot(
+            apagar_futuras_por_varredura(canal)
         )
 
         if futuras.get("mensagens_ids"):
