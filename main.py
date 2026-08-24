@@ -5,6 +5,9 @@ import random
 import re
 import threading
 import secrets
+import urllib.parse
+import urllib.request
+import urllib.error
 from copy import deepcopy
 from pathlib import Path
 from functools import wraps
@@ -668,6 +671,7 @@ _eventos_recrutamento_lock = threading.Lock()
 EVENTOS_RECRUTAMENTO_SECRET = os.getenv("EVENTOS_RECRUTAMENTO_SECRET", "").strip()
 EVENTOS_FORMS_URL = "https://forms.gle/ZVhPQhdVZ6B3S25E9"
 EVENTOS_REFAZER_HORAS = 24
+CONTA_TESTE_ID = 1532838576256057557
 
 
 def recrutamento_eventos_vazio():
@@ -763,6 +767,239 @@ def _candidatura_por_canal(dados, canal_id):
         if str(candidatura.get("discord_channel_id") or "") == canal_id:
             return candidatura
     return None
+
+
+# =========================================================
+# IDENTIDADE GAMER — ROBLOX OAUTH 2.0 / OPENID CONNECT
+# =========================================================
+
+ROBLOX_VINCULOS_FILE = DATA_DIR / "roblox_vinculos.json"
+_roblox_vinculos_lock = threading.Lock()
+
+ROBLOX_VINCULO_SECRET = os.getenv(
+    "ROBLOX_VINCULO_SECRET",
+    "",
+).strip()
+ROBLOX_CLIENT_ID = os.getenv(
+    "ROBLOX_CLIENT_ID",
+    "",
+).strip()
+ROBLOX_CLIENT_SECRET = os.getenv(
+    "ROBLOX_CLIENT_SECRET",
+    "",
+).strip()
+ROBLOX_REDIRECT_URI = os.getenv(
+    "ROBLOX_REDIRECT_URI",
+    "https://resenha-maxima.up.railway.app/roblox/callback",
+).strip()
+
+ROBLOX_AUTHORIZE_URL = (
+    "https://apis.roblox.com/oauth/v1/authorize"
+)
+ROBLOX_TOKEN_URL = (
+    "https://apis.roblox.com/oauth/v1/token"
+)
+ROBLOX_USERINFO_URL = (
+    "https://apis.roblox.com/oauth/v1/userinfo"
+)
+ROBLOX_PENDENCIA_MINUTOS = 15
+
+
+def roblox_vinculos_vazio():
+    return {
+        "versao": 1,
+        "vinculos": {},
+        "pendentes": {},
+    }
+
+
+def _salvar_roblox_vinculos_sem_lock(dados):
+    temporario = ROBLOX_VINCULOS_FILE.with_suffix(".tmp")
+    with temporario.open(
+        "w",
+        encoding="utf-8",
+    ) as arquivo:
+        json.dump(
+            dados,
+            arquivo,
+            ensure_ascii=False,
+            indent=2,
+        )
+    temporario.replace(ROBLOX_VINCULOS_FILE)
+
+
+def carregar_roblox_vinculos():
+    with _roblox_vinculos_lock:
+        if not ROBLOX_VINCULOS_FILE.exists():
+            _salvar_roblox_vinculos_sem_lock(
+                roblox_vinculos_vazio()
+            )
+
+        try:
+            with ROBLOX_VINCULOS_FILE.open(
+                "r",
+                encoding="utf-8",
+            ) as arquivo:
+                dados = json.load(arquivo)
+        except (
+            OSError,
+            json.JSONDecodeError,
+        ):
+            dados = roblox_vinculos_vazio()
+
+        if not isinstance(dados, dict):
+            dados = roblox_vinculos_vazio()
+        if not isinstance(dados.get("vinculos"), dict):
+            dados["vinculos"] = {}
+        if not isinstance(dados.get("pendentes"), dict):
+            dados["pendentes"] = {}
+        dados.setdefault("versao", 1)
+
+        agora = datetime.now(timezone.utc)
+        expirados = []
+        for token, item in dados["pendentes"].items():
+            expira = _parse_iso_utc(
+                item.get("expira_em")
+                if isinstance(item, dict)
+                else None
+            )
+            if expira is None or expira <= agora:
+                expirados.append(token)
+        if expirados:
+            for token in expirados:
+                dados["pendentes"].pop(token, None)
+            _salvar_roblox_vinculos_sem_lock(dados)
+
+        return dados
+
+
+def salvar_roblox_vinculos(dados):
+    with _roblox_vinculos_lock:
+        _salvar_roblox_vinculos_sem_lock(dados)
+
+
+def _autorizado_roblox(payload=None):
+    segredo = request.headers.get(
+        "X-Roblox-Link-Secret",
+        "",
+    ).strip()
+    if not segredo and isinstance(payload, dict):
+        segredo = str(
+            payload.get("secret")
+            or ""
+        ).strip()
+
+    return bool(
+        ROBLOX_VINCULO_SECRET
+        and segredo
+        and secrets.compare_digest(
+            segredo,
+            ROBLOX_VINCULO_SECRET,
+        )
+    )
+
+
+def _roblox_configurado():
+    return bool(
+        ROBLOX_CLIENT_ID
+        and ROBLOX_CLIENT_SECRET
+        and ROBLOX_REDIRECT_URI
+    )
+
+
+def _pagina_roblox(
+    titulo,
+    mensagem,
+    sucesso=False,
+):
+    cor = "#57F287" if sucesso else "#ED4245"
+    icone = "✅" if sucesso else "⚠️"
+    titulo_seguro = str(titulo).replace(
+        "<", "&lt;"
+    ).replace(">", "&gt;")
+    mensagem_segura = str(mensagem).replace(
+        "<", "&lt;"
+    ).replace(">", "&gt;")
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{titulo_seguro} • Resenha Máxima</title>
+<style>
+body {{
+  margin:0; min-height:100vh; display:grid; place-items:center;
+  background:#111214; color:#fff; font-family:Arial,sans-serif;
+}}
+.card {{
+  width:min(560px,calc(100% - 40px)); background:#1e1f22;
+  border:1px solid #2b2d31; border-radius:18px; padding:30px;
+  box-shadow:0 18px 60px rgba(0,0,0,.35);
+}}
+h1 {{ margin:0 0 14px; font-size:24px; }}
+p {{ color:#dbdee1; line-height:1.55; white-space:pre-line; }}
+.badge {{ color:{cor}; font-weight:700; }}
+small {{ color:#949ba4; }}
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="badge">{icone} RESENHA MÁXIMA</div>
+    <h1>{titulo_seguro}</h1>
+    <p>{mensagem_segura}</p>
+    <small>Você já pode voltar para o Discord.</small>
+  </main>
+</body>
+</html>"""
+
+
+def _post_form_roblox(url, campos):
+    corpo = urllib.parse.urlencode(
+        campos
+    ).encode("utf-8")
+    requisicao = urllib.request.Request(
+        url,
+        data=corpo,
+        headers={
+            "Content-Type": (
+                "application/x-www-form-urlencoded"
+            ),
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(
+        requisicao,
+        timeout=12,
+    ) as resposta:
+        bruto = resposta.read().decode(
+            "utf-8",
+            errors="replace",
+        )
+    return json.loads(bruto)
+
+
+def _userinfo_roblox(access_token):
+    requisicao = urllib.request.Request(
+        ROBLOX_USERINFO_URL,
+        headers={
+            "Authorization": (
+                f"Bearer {access_token}"
+            ),
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(
+        requisicao,
+        timeout=12,
+    ) as resposta:
+        bruto = resposta.read().decode(
+            "utf-8",
+            errors="replace",
+        )
+    return json.loads(bruto)
+
 
 IA_CONFIG_PADRAO = {
     "ativa": True,
@@ -2874,6 +3111,438 @@ def api_ia_config():
     return jsonify(resposta)
 
 
+
+# =========================================================
+# ROBLOX — API INTERNA + OAUTH
+# =========================================================
+
+@app.route(
+    "/api/roblox/criar-vinculo",
+    methods=["POST"],
+)
+def api_roblox_criar_vinculo():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_roblox(payload):
+        return jsonify({
+            "ok": False,
+            "erro": "Não autorizado.",
+        }), 401
+
+    if not _roblox_configurado():
+        return jsonify({
+            "ok": False,
+            "erro": (
+                "OAuth Roblox ainda não configurado no SITE. "
+                "Defina ROBLOX_CLIENT_ID, ROBLOX_CLIENT_SECRET "
+                "e ROBLOX_REDIRECT_URI."
+            ),
+        }), 503
+
+    discord_id = str(
+        payload.get("discord_id")
+        or ""
+    ).strip()
+    guild_id = str(
+        payload.get("guild_id")
+        or ""
+    ).strip()
+    discord_nome = str(
+        payload.get("discord_nome")
+        or ""
+    ).strip()[:150]
+
+    if not discord_id.isdigit():
+        return jsonify({
+            "ok": False,
+            "erro": "Discord ID inválido.",
+        }), 400
+
+    dados = carregar_roblox_vinculos()
+
+    # Mantém somente a solicitação mais recente do usuário.
+    for token_antigo, pendente in list(
+        dados["pendentes"].items()
+    ):
+        if str(
+            pendente.get("discord_id")
+            or ""
+        ) == discord_id:
+            dados["pendentes"].pop(
+                token_antigo,
+                None,
+            )
+
+    token = secrets.token_urlsafe(24)
+    oauth_state = secrets.token_urlsafe(32)
+    nonce = secrets.token_urlsafe(24)
+    agora = datetime.now(timezone.utc)
+    expira = agora + timedelta(
+        minutes=ROBLOX_PENDENCIA_MINUTOS
+    )
+
+    dados["pendentes"][token] = {
+        "discord_id": discord_id,
+        "discord_nome": discord_nome,
+        "guild_id": guild_id,
+        "oauth_state": oauth_state,
+        "nonce": nonce,
+        "criado_em": agora.isoformat(),
+        "expira_em": expira.isoformat(),
+    }
+    salvar_roblox_vinculos(dados)
+
+    url = (
+        request.url_root.rstrip("/")
+        + url_for(
+            "roblox_iniciar",
+            token=token,
+        )
+    )
+    return jsonify({
+        "ok": True,
+        "url": url,
+        "expira_em": expira.isoformat(),
+    })
+
+
+@app.route("/roblox/iniciar/<token>")
+def roblox_iniciar(token):
+    dados = carregar_roblox_vinculos()
+    pendente = dados["pendentes"].get(
+        str(token)
+    )
+    if not pendente:
+        return (
+            _pagina_roblox(
+                "Link expirado",
+                (
+                    "Este link de vinculação não existe mais "
+                    "ou passou do prazo de 15 minutos.\n\n"
+                    "Use /roblox vincular novamente no Discord."
+                ),
+            ),
+            410,
+        )
+
+    if not _roblox_configurado():
+        return (
+            _pagina_roblox(
+                "Roblox ainda não configurado",
+                (
+                    "O sistema foi instalado, mas as credenciais "
+                    "OAuth do Roblox ainda não foram configuradas "
+                    "no site."
+                ),
+            ),
+            503,
+        )
+
+    parametros = {
+        "client_id": ROBLOX_CLIENT_ID,
+        "redirect_uri": ROBLOX_REDIRECT_URI,
+        "scope": "openid profile",
+        "response_type": "code",
+        "state": pendente["oauth_state"],
+        "nonce": pendente["nonce"],
+    }
+    destino = (
+        ROBLOX_AUTHORIZE_URL
+        + "?"
+        + urllib.parse.urlencode(parametros)
+    )
+    return redirect(destino)
+
+
+@app.route("/roblox/callback")
+def roblox_callback():
+    erro_oauth = str(
+        request.args.get("error")
+        or ""
+    ).strip()
+    if erro_oauth:
+        descricao = str(
+            request.args.get("error_description")
+            or "A autorização foi cancelada ou recusada."
+        )
+        return (
+            _pagina_roblox(
+                "Vinculação cancelada",
+                descricao,
+            ),
+            400,
+        )
+
+    code = str(
+        request.args.get("code")
+        or ""
+    ).strip()
+    state = str(
+        request.args.get("state")
+        or ""
+    ).strip()
+    if not code or not state:
+        return (
+            _pagina_roblox(
+                "Resposta inválida",
+                "O Roblox não devolveu o código de autorização esperado.",
+            ),
+            400,
+        )
+
+    dados = carregar_roblox_vinculos()
+    token_pendente = None
+    pendente = None
+    for token, item in dados["pendentes"].items():
+        if secrets.compare_digest(
+            str(item.get("oauth_state") or ""),
+            state,
+        ):
+            token_pendente = token
+            pendente = item
+            break
+
+    if not pendente:
+        return (
+            _pagina_roblox(
+                "Sessão expirada",
+                (
+                    "Não encontrei uma solicitação válida para "
+                    "esta autorização. Use /roblox vincular novamente."
+                ),
+            ),
+            410,
+        )
+
+    try:
+        tokens = _post_form_roblox(
+            ROBLOX_TOKEN_URL,
+            {
+                "code": code,
+                "grant_type": "authorization_code",
+                "client_id": ROBLOX_CLIENT_ID,
+                "client_secret": ROBLOX_CLIENT_SECRET,
+                "redirect_uri": ROBLOX_REDIRECT_URI,
+            },
+        )
+        access_token = str(
+            tokens.get("access_token")
+            or ""
+        ).strip()
+        if not access_token:
+            raise RuntimeError(
+                "O Roblox não devolveu access_token."
+            )
+
+        perfil = _userinfo_roblox(
+            access_token
+        )
+    except (
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        RuntimeError,
+    ) as erro:
+        print(
+            "Erro no OAuth Roblox: "
+            f"{type(erro).__name__}: {erro}"
+        )
+        return (
+            _pagina_roblox(
+                "Falha ao verificar a conta",
+                (
+                    "Não consegui concluir a verificação com o "
+                    "Roblox agora. Tente novamente pelo Discord."
+                ),
+            ),
+            502,
+        )
+
+    roblox_id = str(
+        perfil.get("sub")
+        or ""
+    ).strip()
+    if not roblox_id.isdigit():
+        return (
+            _pagina_roblox(
+                "Perfil Roblox inválido",
+                (
+                    "O Roblox autenticou a sessão, mas não enviou "
+                    "um User ID válido."
+                ),
+            ),
+            502,
+        )
+
+    discord_id = str(
+        pendente.get("discord_id")
+        or ""
+    )
+
+    # Uma conta Roblox não pode representar dois Discords ao mesmo tempo.
+    for outro_discord_id, vinculo in dados[
+        "vinculos"
+    ].items():
+        if (
+            outro_discord_id != discord_id
+            and str(
+                vinculo.get("roblox_id")
+                or ""
+            ) == roblox_id
+        ):
+            return (
+                _pagina_roblox(
+                    "Conta já vinculada",
+                    (
+                        "Essa conta Roblox já está vinculada a "
+                        "outro membro do Discord.\n\n"
+                        "Se isso estiver incorreto, procure a administração."
+                    ),
+                ),
+                409,
+            )
+
+    username = str(
+        perfil.get("preferred_username")
+        or perfil.get("nickname")
+        or perfil.get("name")
+        or roblox_id
+    )[:80]
+    display_name = str(
+        perfil.get("name")
+        or perfil.get("nickname")
+        or username
+    )[:80]
+    profile_url = str(
+        perfil.get("profile")
+        or (
+            f"https://www.roblox.com/users/"
+            f"{roblox_id}/profile"
+        )
+    )[:500]
+    picture = str(
+        perfil.get("picture")
+        or ""
+    )[:1000]
+
+    dados["vinculos"][discord_id] = {
+        "discord_id": discord_id,
+        "discord_nome": str(
+            pendente.get("discord_nome")
+            or ""
+        )[:150],
+        "guild_id": str(
+            pendente.get("guild_id")
+            or ""
+        ),
+        "roblox_id": roblox_id,
+        "username": username,
+        "display_name": display_name,
+        "profile": profile_url,
+        "picture": picture,
+        "verificado_em": _agora_utc_iso(),
+    }
+    if token_pendente:
+        dados["pendentes"].pop(
+            token_pendente,
+            None,
+        )
+    salvar_roblox_vinculos(dados)
+
+    return _pagina_roblox(
+        "Conta Roblox vinculada!",
+        (
+            f"Roblox: @{username}\n"
+            f"Display: {display_name}\n\n"
+            "Volte ao Discord e clique em “Já vinculei”. "
+            "Depois disso, a conta aparecerá no /perfil."
+        ),
+        sucesso=True,
+    )
+
+
+@app.route("/api/roblox/vinculo/<discord_id>")
+def api_roblox_vinculo(discord_id):
+    if not _autorizado_roblox():
+        return jsonify({
+            "ok": False,
+            "erro": "Não autorizado.",
+        }), 401
+
+    discord_id = str(
+        discord_id
+        or ""
+    ).strip()
+    if not discord_id.isdigit():
+        return jsonify({
+            "ok": False,
+            "erro": "Discord ID inválido.",
+        }), 400
+
+    dados = carregar_roblox_vinculos()
+    vinculo = dados["vinculos"].get(
+        discord_id
+    )
+    return jsonify({
+        "ok": True,
+        "vinculado": bool(vinculo),
+        "vinculo": vinculo,
+    })
+
+
+@app.route(
+    "/api/roblox/desvincular",
+    methods=["POST"],
+)
+def api_roblox_desvincular():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_roblox(payload):
+        return jsonify({
+            "ok": False,
+            "erro": "Não autorizado.",
+        }), 401
+
+    discord_id = str(
+        payload.get("discord_id")
+        or ""
+    ).strip()
+    if not discord_id.isdigit():
+        return jsonify({
+            "ok": False,
+            "erro": "Discord ID inválido.",
+        }), 400
+
+    dados = carregar_roblox_vinculos()
+    removido = dados["vinculos"].pop(
+        discord_id,
+        None,
+    )
+    for token, item in list(
+        dados["pendentes"].items()
+    ):
+        if str(
+            item.get("discord_id")
+            or ""
+        ) == discord_id:
+            dados["pendentes"].pop(
+                token,
+                None,
+            )
+
+    salvar_roblox_vinculos(dados)
+
+    if removido is None:
+        return jsonify({
+            "ok": False,
+            "erro": "Nenhum vínculo encontrado.",
+        }), 404
+
+    return jsonify({
+        "ok": True,
+        "removido": removido,
+    })
+
+
 # =========================================================
 # LINK PÚBLICO — PROVA COM CÓDIGO PRÉ-PREENCHIDO
 # =========================================================
@@ -2970,9 +3639,13 @@ def api_eventos_criar_candidatura():
         }), 400
 
     dados = carregar_recrutamento_eventos()
+    ignorar_cooldown = (
+        discord_id == str(CONTA_TESTE_ID)
+        and bool(payload.get("ignorar_cooldown"))
+    )
     cooldown = dados.get("cooldowns", {}).get(discord_id, "")
     restantes = _segundos_restantes_cooldown(cooldown)
-    if restantes > 0:
+    if restantes > 0 and not ignorar_cooldown:
         return jsonify({
             "ok": False,
             "erro": "cooldown",
@@ -3020,6 +3693,8 @@ def api_eventos_criar_candidatura():
         "prova_recebida_em": "",
         "discord_channel_id": "",
         "voice_channel_id": "",
+        "horario_entrevista": "",
+        "horario_informado_em": "",
         "avaliador_id": "",
         "avaliador_nome": "",
         "resultado_em": "",
@@ -3175,6 +3850,55 @@ def api_eventos_receber_prova():
     candidatura["discord_channel_id"] = ""
     salvar_recrutamento_eventos(dados)
     return jsonify({"ok": True, "codigo": codigo})
+
+
+@app.route(
+    "/api/recrutamento/eventos/horario",
+    methods=["POST"],
+)
+def api_eventos_salvar_horario():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_recrutamento_eventos(payload):
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+
+    codigo = str(payload.get("codigo") or "").strip().upper()
+    discord_id = str(payload.get("discord_id") or "").strip()
+    horario = " ".join(str(payload.get("horario") or "").strip().split())[:180]
+
+    if not codigo or not discord_id.isdigit() or len(horario) < 2:
+        return jsonify({
+            "ok": False,
+            "erro": "Código, usuário ou horário inválido.",
+        }), 400
+
+    dados = carregar_recrutamento_eventos()
+    candidatura = dados.get("candidaturas", {}).get(codigo)
+    if not candidatura:
+        return jsonify({
+            "ok": False,
+            "erro": "Candidatura não encontrada.",
+        }), 404
+
+    if str(candidatura.get("discord_id") or "") != discord_id:
+        return jsonify({
+            "ok": False,
+            "erro": "Esta candidatura pertence a outro usuário.",
+        }), 403
+
+    if candidatura.get("status") in {"aprovado", "reprovado", "encerrado"}:
+        return jsonify({
+            "ok": False,
+            "erro": "A candidatura já foi finalizada.",
+        }), 409
+
+    candidatura["horario_entrevista"] = horario
+    candidatura["horario_informado_em"] = _agora_utc_iso()
+    salvar_recrutamento_eventos(dados)
+    return jsonify({
+        "ok": True,
+        "codigo": codigo,
+        "horario": horario,
+    })
 
 
 @app.route("/api/recrutamento/eventos/pendentes")
