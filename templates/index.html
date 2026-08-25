@@ -49,7 +49,7 @@ alt="Logo Resenha Máxima">
         🎛️ Menus
       </a>
 
-      {% if pode_ver_modelos %}
+      {% if acesso_total %}
       <a
         class="panel-tab {% if aba == 'modelos' %}active{% endif %}"
         href="{{ url_for('painel', aba='modelos') }}"
@@ -57,41 +57,18 @@ alt="Logo Resenha Máxima">
         💬 Mensagens do Bot
       </a>
 
-      {% endif %}
-
-      {% if pode_ver_central %}
       <a
         class="panel-tab {% if aba == 'central' %}active{% endif %}"
         href="{{ url_for('painel', aba='central') }}"
       >
         🛡️ Central Administrativa
       </a>
-      {% endif %}
 
-      {% if pode_ver_entradas %}
       <a
-        class="panel-tab {% if aba == 'entradas' %}active{% endif %}"
-        href="{{ url_for('painel', aba='entradas') }}"
+        class="panel-tab {% if aba == 'servidores' %}active{% endif %}"
+        href="{{ url_for('painel', aba='servidores') }}"
       >
-        🔗 Entradas
-      </a>
-      {% endif %}
-
-      {% if pode_ver_atualizacoes %}
-      <a
-        class="panel-tab {% if aba == 'atualizacoes' %}active{% endif %}"
-        href="{{ url_for('painel', aba='atualizacoes') }}"
-      >
-        📢 Atualizações
-      </a>
-      {% endif %}
-
-      {% if pode_ver_ia %}
-      <a
-        class="panel-tab {% if aba == 'ia' %}active{% endif %}"
-        href="{{ url_for('painel', aba='ia') }}"
-      >
-        🤖 IA
+        🏢 Servidores
       </a>
       {% endif %}
     </nav>
@@ -389,7 +366,7 @@ alt="Avatar Resenha Máxima">
       </form>
       {% endif %}
 
-    {% elif aba == 'modelos' and pode_ver_modelos %}
+    {% elif aba == 'modelos' and acesso_total %}
       <section class="card">
         <span class="eyebrow gold">SOMENTE LEITURA</span>
         <h2>💬 Modelos de mensagens do bot</h2>
@@ -413,7 +390,114 @@ alt="Avatar Resenha Máxima">
         </div>
       </section>
 
-    {% elif aba == 'central' and pode_ver_central %}
+
+    {% elif aba == 'servidores' and acesso_total %}
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow gold">CONFIGURAÇÃO DO DISCORD</span>
+            <h2>🏢 Servidores da Resenha Máxima</h2>
+            <p>
+              Configure o servidor principal e crie/configure o servidor do Departamento de Eventos sem copiar IDs manualmente.
+            </p>
+          </div>
+          <a class="secondary-link" href="{{ url_for('painel', aba='servidores') }}">🔄 Atualizar</a>
+        </div>
+
+        <div class="admin-grid">
+          <article class="card">
+            <span class="eyebrow">SERVIDOR PRINCIPAL</span>
+            <h3>🏠 RESENHA MÁXIMA</h3>
+            <p class="muted">
+              {{ servidor_eventos_config.principal_id or 'ID do servidor principal configurado pela variável GUILD_ID.' }}
+            </p>
+            <div class="permission-explain">
+              <strong>Configuração atual</strong>
+              <p>O painel continua usando este servidor para a configuração principal.</p>
+            </div>
+          </article>
+
+          <article class="card">
+            <span class="eyebrow gold">DEPARTAMENTO DE EVENTOS</span>
+            <h3>➕ Criar servidor</h3>
+
+            {% if servidor_eventos_config.eventos_guild_id %}
+              <div class="success">
+                ✅ Servidor configurado:
+                <strong>{{ servidor_eventos_config.eventos_guild_nome }}</strong>
+                <br>
+                ID: {{ servidor_eventos_config.eventos_guild_id }}
+              </div>
+              <p class="muted">
+                O botão de criação fica oculto para evitar duplicação.
+              </p>
+            {% else %}
+              <p class="muted">
+                Escolha um servidor onde o bot já está presente. O servidor principal não aparece na lista.
+              </p>
+
+              {% if servidores_eventos %}
+                <form method="post" action="{{ url_for('configurar_servidor_pelo_site') }}" class="user-create-form">
+                  <label for="guild_id">Servidor</label>
+                  <select id="guild_id" name="guild_id" required>
+                    {% for servidor in servidores_eventos %}
+                      <option value="{{ servidor.id }}">
+                        {{ servidor.nome }} — {{ servidor.membros }} membro(s)
+                      </option>
+                    {% endfor %}
+                  </select>
+
+                  <button type="submit" onclick="return confirm('Configurar automaticamente este servidor para o Departamento de Eventos?')">
+                    🏗️ Criar servidor
+                  </button>
+                </form>
+              {% else %}
+                <div class="empty-state">
+                  ❌ Nenhum servidor disponível. Adicione o bot a um servidor primeiro.
+                </div>
+              {% endif %}
+            {% endif %}
+          </article>
+        </div>
+      </section>
+
+      {% if servidor_eventos_config.eventos_guild_id %}
+      <section class="card">
+        <span class="eyebrow gold">HIERARQUIA CRIADA AUTOMATICAMENTE</span>
+        <h2>👑 Cargos do Departamento</h2>
+        <div class="panel-users-list">
+          {% for chave, nome in servidor_eventos_config.role_names.items() %}
+            <div class="panel-user-item">
+              <div>
+                <strong>{{ nome }}</strong>
+                <small>ID: {{ servidor_eventos_config.roles.get(chave, '—') }}</small>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+        <div class="permission-explain">
+          <strong>Permissões</strong>
+          <p>👑 Chef de Departamento → Administração.</p>
+          <p>🎖️ Diretor → quase tudo, sem permissão de banimento.</p>
+          <p>📈 Gerente → moderação e gestão operacional.</p>
+          <p>📋 Coordenador/Supervisor → permissões progressivas.</p>
+          <p>🌱 Aprendiz → acesso básico ao departamento.</p>
+          <p>🚫 Intruso → sem acesso aos canais do departamento.</p>
+          <p>🧪 Conta de teste → cargo próprio, sem permissões especiais.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <span class="eyebrow">ESTRUTURA AUTOMÁTICA</span>
+        <h2>📁 Canais</h2>
+        <p class="muted">
+          Chat, anúncios, sugestões, mídias, comandos, regras, advertências, hierarquia, gerentes, diretoria e call.
+          Os canais com acesso possuem <strong>Ver canal + Ler histórico de mensagens</strong> configurados.
+        </p>
+      </section>
+      {% endif %}
+
+    {% elif aba == 'central' and acesso_total %}
       <div class="admin-grid">
         <section class="card">
           <div class="section-heading">
@@ -453,7 +537,6 @@ alt="Avatar Resenha Máxima">
           </div>
         </section>
 
-        {% if acesso_total %}
         <section class="card">
           <span class="eyebrow gold">CONTAS DO PAINEL</span>
           <h2>👥 Criar usuário</h2>
@@ -503,9 +586,6 @@ alt="Avatar Resenha Máxima">
             <p>
               🎟️ Departamento de Eventos → somente menu do canal de eventos.
             </p>
-            <p>🛡️ Departamento de Banimentos → mensagens + central administrativa.</p>
-            <p>🚪 Departamento de Entrada → mensagens + central + rastreamento de entradas.</p>
-            <p>⛏️ Responsável pela Patente de Minecraft → mensagens + central administrativa.</p>
           </div>
 
           <h3 class="subheading">Usuários criados</h3>
@@ -551,409 +631,8 @@ alt="Avatar Resenha Máxima">
             </div>
           {% endif %}
         </section>
-        {% endif %}
       </div>
-
-    {% elif aba == 'entradas' and pode_ver_entradas %}
-      <section class="stats-grid">
-        <article class="stat-card">
-          <span>ENTRADAS REGISTRADAS</span>
-          <strong>{{ entradas|length }}</strong>
-          <small>últimos registros carregados</small>
-        </article>
-        <article class="stat-card">
-          <span>TOP CONVIDADOR</span>
-          <strong>{% if ranking_convites %}{{ ranking_convites[0].nome }}{% else %}—{% endif %}</strong>
-          <small>{% if ranking_convites %}{{ ranking_convites[0].total }} entrada(s){% else %}sem dados ainda{% endif %}</small>
-        </article>
-        <article class="stat-card">
-          <span>RASTREAMENTO</span>
-          <strong>Ao vivo</strong>
-          <small>convites + link personalizado</small>
-        </article>
-      </section>
-
-      <div class="entrance-grid">
-        <section class="card">
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow gold">HISTÓRICO</span>
-              <h2>🔗 Quem entrou e por onde</h2>
-              <p>O bot compara o contador dos convites no momento em que um membro entra.</p>
-            </div>
-            <a class="secondary-link" href="{{ url_for('painel', aba='entradas') }}">🔄 Atualizar</a>
-          </div>
-
-          <div class="entrance-list">
-            {% if entradas %}
-              {% for entrada in entradas %}
-              <article class="entrance-item">
-                <div class="entrance-main">
-                  <strong>{{ entrada.membro_exibicao or entrada.membro_nome }}</strong>
-                  <small>ID {{ entrada.membro_id }}</small>
-                </div>
-                <div class="entrance-source">
-                  {% if entrada.origem == 'convite' %}
-                    <span class="source-pill invite">🔗 Convite</span>
-                    <strong>{{ entrada.convidador_nome or 'Desconhecido' }}</strong>
-                    <small>código: {{ entrada.convite_codigo }}</small>
-                  {% elif entrada.origem == 'vanity' %}
-                    <span class="source-pill vanity">✨ Link personalizado</span>
-                    <strong>/{{ entrada.convite_codigo }}</strong>
-                    <small>origem detectada pelo contador do servidor</small>
-                  {% else %}
-                    <span class="source-pill unknown">❔ Desconhecida</span>
-                    <small>{{ entrada.detalhe }}</small>
-                  {% endif %}
-                </div>
-                <time>{{ entrada.data }}</time>
-              </article>
-              {% endfor %}
-            {% else %}
-              <div class="empty-state">Nenhuma entrada registrada ainda. Os novos membros aparecerão aqui.</div>
-            {% endif %}
-          </div>
-        </section>
-
-        <aside class="card">
-          <span class="eyebrow gold">RANKING</span>
-          <h2>🏆 Quem mais trouxe membros</h2>
-          <div class="ranking-list">
-            {% if ranking_convites %}
-              {% for pessoa in ranking_convites %}
-              <div class="ranking-item">
-                <span class="rank-number">{{ loop.index }}</span>
-                <div><strong>{{ pessoa.nome }}</strong><small>ID {{ pessoa.id }}</small></div>
-                <b>{{ pessoa.total }}</b>
-              </div>
-              {% endfor %}
-            {% else %}
-              <p class="muted">O ranking aparecerá após as primeiras entradas por convite.</p>
-            {% endif %}
-          </div>
-          <div class="setup-note">
-            <strong>Sobre Server Tags</strong>
-            O Discord não informa pela API que uma pessoa “entrou através de uma Server Tag”.
-            Por isso o painel não inventa esse dado: convites e vanity links são detectados; o restante fica como origem desconhecida.
-          </div>
-        </aside>
-      </div>
-
-    {% elif aba == 'atualizacoes' and pode_ver_atualizacoes %}
-      <section class="updates-hero card">
-        <div>
-          <span class="eyebrow gold">ROADMAP + PATCH NOTES</span>
-          <h2>📢 Central de Atualizações</h2>
-          <p class="muted">
-            Publique as futuras atualizações e, quando a versão sair,
-            transforme a prévia em notas oficiais no mesmo canal.
-            As notas antigas permanecem no Discord.
-          </p>
-        </div>
-        <span class="update-status {% if atualizacoes.futuras_publicadas %}live{% endif %}">
-          {% if atualizacoes.futuras_publicadas %}
-            🔮 Prévia ativa
-          {% else %}
-            ⚪ Sem prévia ativa
-          {% endif %}
-        </span>
-      </section>
-
-      <section class="card">
-        <div class="section-heading">
-          <div>
-            <span class="eyebrow">DESTINO</span>
-            <h2>Canal de atualizações</h2>
-            <p>Escolha uma vez o mesmo canal usado pelo histórico oficial do bot.</p>
-          </div>
-        </div>
-
-        <form
-          method="post"
-          action="{{ url_for('definir_canal_atualizacoes') }}"
-          class="update-channel-form"
-        >
-          <select name="canal_atualizacoes_id" required>
-            <option value="">Selecione um canal...</option>
-            {% for canal in canais %}
-              <option
-                value="{{ canal.id }}"
-                {% if canal.id == atualizacoes.canal_id %}selected{% endif %}
-              >
-                # {{ canal.nome }} — {{ canal.categoria }}
-              </option>
-            {% endfor %}
-          </select>
-          <button type="submit">💾 Salvar canal</button>
-        </form>
-      </section>
-
-      <div class="updates-grid">
-        <section class="card update-editor-card">
-          <span class="eyebrow gold">PRÓXIMAS VERSÕES</span>
-          <h2>🔮 Futuras atualizações</h2>
-          <p class="muted">
-            Quando juntarmos umas 3 mudanças, cole aqui o modelinho pronto.
-            O bot envia como <strong>mensagem normal</strong>, sem embed.
-          </p>
-
-          <form
-            method="post"
-            action="{{ url_for('publicar_atualizacoes_futuras') }}"
-          >
-            <input
-              type="hidden"
-              name="canal_atualizacoes_id"
-              value="{{ atualizacoes.canal_id }}"
-            >
-
-            <label for="texto_futuras">Mensagem</label>
-            <textarea
-              id="texto_futuras"
-              name="texto_futuras"
-              class="update-textarea"
-              maxlength="12000"
-              placeholder="🔮 FUTURAS ATUALIZAÇÕES&#10;&#10;Algumas coisas que estão sendo preparadas:&#10;&#10;• Primeira novidade&#10;• Segunda novidade&#10;• Terceira novidade&#10;&#10;⚠️ Os itens podem mudar antes do lançamento."
-            >{{ atualizacoes.futuras_texto }}</textarea>
-
-            <div class="update-actions">
-              <button type="submit">
-                {% if atualizacoes.futuras_publicadas %}
-                  ♻️ Atualizar mensagem futura
-                {% else %}
-                  📤 Publicar futuras atualizações
-                {% endif %}
-              </button>
-            </div>
-          </form>
-
-          {% if atualizacoes.futuras_publicadas %}
-          <form
-            method="post"
-            action="{{ url_for('remover_atualizacoes_futuras') }}"
-            onsubmit="return confirm('Remover a mensagem de futuras atualizações do Discord?')"
-          >
-            <button type="submit" class="danger-button update-remove-button">
-              🗑️ Remover prévia do Discord
-            </button>
-          </form>
-          {% endif %}
-        </section>
-
-        <aside class="card update-preview-card">
-          <span class="eyebrow">PRÉ-VISUALIZAÇÃO</span>
-          <h2>Como vai aparecer no Discord</h2>
-
-          <div class="discord-stage normal-message-stage">
-            <div class="discord-message">
-              <img
-                class="bot-avatar brand-image"
-                src="{{ url_for('static', filename='logo_resenha_maxima.png') }}"
-                alt="Avatar Resenha Máxima"
-              >
-              <div class="discord-content">
-                <div class="discord-author-row">
-                  <strong>RESENHA MAXIMA</strong>
-                  <span class="app-badge">APP</span>
-                  <span class="timestamp">agora</span>
-                </div>
-                <div
-                  class="discord-normal-text"
-                  id="future-update-preview"
-                >{{ atualizacoes.futuras_texto or 'Cole o modelinho ao lado para visualizar a mensagem.' }}</div>
-              </div>
-            </div>
-          </div>
-
-          {% if atualizacoes.futuras_publicado_em %}
-            <small class="update-date">
-              Última publicação: {{ atualizacoes.futuras_publicado_em }}
-            </small>
-          {% endif %}
-        </aside>
-      </div>
-
-      <section class="card release-card">
-        <span class="eyebrow gold">LANÇAMENTO</span>
-        <h2>🚀 Transformar em notas da atualização</h2>
-        <p class="muted">
-          Quando a atualização realmente sair, cole as notas oficiais aqui.
-          O site publica as notas como mensagem normal e só então remove
-          a mensagem de <strong>Futuras atualizações</strong>.
-          As notas antigas nunca são apagadas.
-        </p>
-
-        <form
-          method="post"
-          action="{{ url_for('lancar_atualizacao') }}"
-          onsubmit="return confirm('Publicar as notas e encerrar as futuras atualizações atuais?')"
-        >
-          <input
-            type="hidden"
-            name="canal_atualizacoes_id"
-            value="{{ atualizacoes.canal_id }}"
-          >
-
-          <label for="texto_notas">Notas oficiais</label>
-          <textarea
-            id="texto_notas"
-            name="texto_notas"
-            class="update-textarea release-textarea"
-            maxlength="16000"
-            placeholder="📝 NOTAS DA ATUALIZAÇÃO — DD/MM/AAAA&#10;&#10;🔧 CORRIGIDO&#10;• ...&#10;&#10;♻️ ALTERAÇÕES&#10;• ...&#10;&#10;🆕 NOVIDADES&#10;• ..."
-          ></textarea>
-
-          <div class="update-actions">
-            <button type="submit">
-              🚀 Publicar notas e concluir futuras
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section class="card">
-        <div class="section-heading">
-          <div>
-            <span class="eyebrow">HISTÓRICO DO PAINEL</span>
-            <h2>📚 Atualizações lançadas a partir de agora</h2>
-            <p>
-              Este histórico é apenas do painel. As mensagens oficiais antigas
-              continuam preservadas no Discord.
-            </p>
-          </div>
-          <span class="count-badge">{{ atualizacoes.historico|length }}</span>
-        </div>
-
-        <div class="update-history-list">
-          {% if atualizacoes.historico %}
-            {% for item in atualizacoes.historico %}
-              <article class="update-history-item">
-                <time>{{ item.data }}</time>
-                <div>{{ item.texto }}</div>
-              </article>
-            {% endfor %}
-          {% else %}
-            <div class="empty-state">
-              Nenhuma atualização foi lançada pelo painel ainda.
-              O histórico começa a partir desta versão.
-            </div>
-          {% endif %}
-        </div>
-      </section>
-
-        {% elif aba == 'ia' and pode_ver_ia %}
-      <section class="updates-hero card">
-        <div>
-          <span class="eyebrow gold">CONFIGURAÇÃO REMOTA</span>
-          <h2>🤖 Configuração da IA</h2>
-          <p class="muted">
-            O bot consulta esta configuração pelo endpoint do painel.
-            Os valores ficam salvos no Volume /data e sobrevivem aos deploys.
-          </p>
-        </div>
-        <span class="update-status {% if ia_config.ativa %}live{% endif %}">
-          {% if ia_config.ativa %}🟢 IA ativa{% else %}🔴 IA desativada{% endif %}
-        </span>
-      </section>
-
-      <form method="post" action="{{ url_for('salvar_configuracao_ia') }}">
-        <div class="updates-grid">
-          <section class="card">
-            <span class="eyebrow gold">GERAL</span>
-            <h2>⚙️ Funcionamento</h2>
-
-            <label style="display:flex;gap:10px;align-items:center;margin:18px 0;">
-              <input
-                type="checkbox"
-                name="ia_ativa"
-                value="1"
-                {% if ia_config.ativa %}checked{% endif %}
-              >
-              <strong>IA ativada</strong>
-            </label>
-
-            <label for="ia_canal_id">Canal onde a IA responde</label>
-            <select id="ia_canal_id" name="ia_canal_id">
-              <option value="">Todos os canais</option>
-              {% for canal in canais %}
-                <option
-                  value="{{ canal.id }}"
-                  {% if canal.id|string == ia_config.canal_id|string %}selected{% endif %}
-                >
-                  # {{ canal.nome }} — {{ canal.categoria }}
-                </option>
-              {% endfor %}
-            </select>
-
-            <label style="display:flex;gap:10px;align-items:center;margin:22px 0;">
-              <input
-                type="checkbox"
-                name="ia_caos_ativo"
-                value="1"
-                {% if ia_config.caos_ativo %}checked{% endif %}
-              >
-              <strong>Modo IA causando ativado</strong>
-            </label>
-          </section>
-
-          <section class="card">
-            <span class="eyebrow gold">ZOEIRA AUTOMÁTICA</span>
-            <h2>😈 IA causando</h2>
-
-            <label>Começa às</label>
-            <input
-              type="number"
-              min="0"
-              max="23"
-              name="ia_caos_hora_inicio"
-              value="{{ ia_config.caos_hora_inicio }}"
-            >
-
-            <label>Termina às</label>
-            <input
-              type="number"
-              min="1"
-              max="24"
-              name="ia_caos_hora_fim"
-              value="{{ ia_config.caos_hora_fim }}"
-            >
-
-            <label>Intervalo mínimo entre ações (minutos)</label>
-            <input
-              type="number"
-              min="15"
-              max="1440"
-              name="ia_caos_intervalo_minutos"
-              value="{{ ia_config.caos_intervalo_minutos }}"
-            >
-
-            <label>Chance por ciclo (0 a 1)</label>
-            <input
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
-              name="ia_caos_chance"
-              value="{{ ia_config.caos_chance }}"
-            >
-
-            <label>Cooldown para a IA entrar em call (minutos)</label>
-            <input
-              type="number"
-              min="5"
-              max="1440"
-              name="ia_call_cooldown_minutos"
-              value="{{ ia_config.call_cooldown_minutos }}"
-            >
-          </section>
-        </div>
-
-        <section class="card" style="margin-top:18px;">
-          <button type="submit">💾 Salvar configuração da IA</button>
-        </section>
-      </form>
-
-{% endif %}
+    {% endif %}
   </main>
 
   <template id="option-template">
@@ -1164,26 +843,6 @@ alt="Avatar Resenha Máxima">
       reindex();
       preview();
       updateDestination();
-    })();
-  </script>
-  {% endif %}
-
-  {% if aba == 'atualizacoes' and pode_ver_atualizacoes %}
-  <script>
-    (() => {
-      const textarea = document.getElementById("texto_futuras");
-      const preview = document.getElementById("future-update-preview");
-
-      if (!textarea || !preview) return;
-
-      const updatePreview = () => {
-        preview.textContent =
-          textarea.value.trim()
-          || "Cole o modelinho ao lado para visualizar a mensagem.";
-      };
-
-      textarea.addEventListener("input", updatePreview);
-      updatePreview();
     })();
   </script>
   {% endif %}
