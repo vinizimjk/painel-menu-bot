@@ -40,6 +40,7 @@ CANAL_TESTE_ID = 1537936115233722388
 # Permissões do /menu deste serviço.
 DONO_ID = 1455937306400653344
 CARGO_DESENVOLVIMENTO_ID = 1533625836874498181
+CANAL_APROVACAO_ID = 1536073451633254420
 MAX_BOTOES = 25
 
 # =========================================================
@@ -879,8 +880,7 @@ app.secret_key = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
 USERS_FILE = DATA_DIR / "panel_users.json"
 ADMIN_LOG_FILE = DATA_DIR / "admin_logs.json"
 
-# Equipe de Desenvolvimento já definida acima:
-# CARGO_DESENVOLVIMENTO_ID = 1533625836874498181
+# Equipe de Desenvolvimento já definida acima.
 #
 # Para o Departamento de Eventos e canal de Eventos, você pode
 # definir os IDs diretamente na Railway. Se não definir, o painel
@@ -1333,6 +1333,85 @@ def sair():
     return redirect(url_for("login"))
 
 
+def carregar_nota_atualizacao_site():
+    candidatos = (
+        Path(__file__).parent / "NOTA_ATUALIZACAO.json",
+        Path(__file__).parent.parent / "NOTA_ATUALIZACAO.json",
+    )
+    for caminho in candidatos:
+        if caminho.exists():
+            try:
+                dados = json.loads(caminho.read_text(encoding="utf-8"))
+                return dados if isinstance(dados, dict) else {}
+            except (OSError, json.JSONDecodeError):
+                pass
+    return {}
+
+
+def carregar_futuras_atualizacoes_site():
+    caminho = Path(__file__).parent / "FUTURAS_ATUALIZACOES.json"
+    if not caminho.exists():
+        return []
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        return dados if isinstance(dados, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+async def obter_solicitacoes_ban_discord():
+    if not bot.is_ready():
+        return []
+    canal = bot.get_channel(CANAL_APROVACAO_ID)
+    if canal is None:
+        try:
+            canal = await bot.fetch_channel(CANAL_APROVACAO_ID)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return []
+    if not isinstance(canal, discord.TextChannel):
+        return []
+    resultado = []
+    try:
+        async for mensagem in canal.history(limit=30):
+            if not mensagem.embeds:
+                continue
+            embed = mensagem.embeds[0]
+            titulo = str(embed.title or "")
+            footer = str(embed.footer.text or "") if embed.footer else ""
+            if "ban" not in titulo.casefold() and "solicitação:" not in footer.casefold():
+                continue
+            campos = []
+            for campo in embed.fields:
+                campos.append({"nome": campo.name, "valor": campo.value})
+            resultado.append({
+                "message_id": str(mensagem.id),
+                "url": mensagem.jump_url,
+                "titulo": titulo or "Solicitação de Ban/Hackban",
+                "descricao": str(embed.description or ""),
+                "cor": embed.color.value if embed.color else 0x5865F2,
+                "campos": campos,
+                "data": mensagem.created_at.strftime("%d/%m/%Y %H:%M"),
+                "autor": str(mensagem.author),
+            })
+    except (discord.Forbidden, discord.HTTPException):
+        return []
+    return resultado
+
+
+def obter_solicitacoes_ban_sync():
+    if not TOKEN or not bot.is_ready() or BOT_LOOP is None:
+        return []
+    try:
+        futuro = asyncio.run_coroutine_threadsafe(
+            obter_solicitacoes_ban_discord(),
+            BOT_LOOP
+        )
+        return futuro.result(timeout=12)
+    except Exception as erro:
+        print(f"Erro ao carregar painel de Ban: {erro}")
+        return []
+
+
 def carregar_logs_administrativos():
     """Carrega a central própria do painel sem consultar a DM."""
     if not ADMIN_LOG_FILE.exists():
@@ -1379,6 +1458,7 @@ def contexto_painel(
         "modelos",
         "central",
         "servidores",
+        "atualizacoes",
     }
 
     if aba not in abas_validas:
@@ -1510,6 +1590,10 @@ def contexto_painel(
             ].casefold()
         )
 
+    nota_atualizacao = carregar_nota_atualizacao_site()
+    futuras_atualizacoes = carregar_futuras_atualizacoes_site()
+    solicitacoes_ban = obter_solicitacoes_ban_sync() if aba == "central" and acesso_total() else []
+
     logs_admin = (
         carregar_logs_administrativos()
         if aba == "central"
@@ -1544,6 +1628,9 @@ def contexto_painel(
         ),
         "modelos_mensagens": MODELOS_MENSAGENS,
         "logs_admin": logs_admin,
+        "nota_atualizacao": nota_atualizacao,
+        "futuras_atualizacoes": futuras_atualizacoes,
+        "solicitacoes_ban": solicitacoes_ban,
         "usuarios_painel": usuarios,
         "cargo_eventos_configurado": bool(
             CARGO_EVENTOS_ID

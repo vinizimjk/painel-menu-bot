@@ -70,6 +70,13 @@ alt="Logo Resenha Máxima">
       >
         🏢 Servidores
       </a>
+
+      <a
+        class="panel-tab {% if aba == 'atualizacoes' %}active{% endif %}"
+        href="{{ url_for('painel', aba='atualizacoes') }}"
+      >
+        📢 Atualizações
+      </a>
       {% endif %}
     </nav>
 
@@ -497,8 +504,70 @@ alt="Avatar Resenha Máxima">
       </section>
       {% endif %}
 
+    {% elif aba == 'atualizacoes' and acesso_total %}
+      <section class="card">
+        <span class="eyebrow gold">CHANGELOG</span>
+        <h2>📢 Notas de atualização</h2>
+        {% if nota_atualizacao %}
+          <div class="admin-log-list">
+            <article class="admin-log-item">
+              <h3>{{ nota_atualizacao.get('titulo', 'Notas de atualização') }}</h3>
+              <p><strong>Versão:</strong> {{ nota_atualizacao.get('versao', '—') }} · <strong>Data:</strong> {{ nota_atualizacao.get('data', '—') }}</p>
+              {% for secao, chave in [('🆕 Novidades','novidades'),('🔧 Correções','correcoes'),('♻️ Alterações','alteracoes'),('🐛 Problemas conhecidos','problemas_conhecidos')] %}
+                {% if nota_atualizacao.get(chave) %}
+                  <h4>{{ secao }}</h4>
+                  <ul>
+                    {% for item in nota_atualizacao.get(chave) %}<li>{{ item }}</li>{% endfor %}
+                  </ul>
+                {% endif %}
+              {% endfor %}
+              {% if nota_atualizacao.get('resumo') %}<p><strong>Resumo:</strong> {{ nota_atualizacao.get('resumo') }}</p>{% endif %}
+            </article>
+          </div>
+        {% else %}
+          <div class="empty-state">Nenhuma nota de atualização encontrada.</div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <span class="eyebrow">PLANEJADO</span>
+        <h2>🔮 Futuras atualizações</h2>
+        {% if futuras_atualizacoes %}
+          <ul>
+            {% for item in futuras_atualizacoes %}<li>{{ item }}</li>{% endfor %}
+          </ul>
+        {% else %}
+          <div class="empty-state">Nenhuma futura atualização cadastrada.</div>
+        {% endif %}
+      </section>
+
     {% elif aba == 'central' and acesso_total %}
       <div class="admin-grid">
+        <section class="card">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow gold">MODERAÇÃO</span>
+              <h2>🛡️ Painel de Ban / Hackban</h2>
+              <p>Solicitações lidas diretamente do canal de aprovação do Discord.</p>
+            </div>
+            <a class="secondary-link" href="{{ url_for('painel', aba='central') }}">🔄 Atualizar</a>
+          </div>
+          {% if solicitacoes_ban %}
+            <div class="admin-log-list">
+              {% for solicitacao in solicitacoes_ban %}
+                <article class="admin-log-item">
+                  <div class="admin-log-meta"><time>{{ solicitacao.data }}</time><span>{{ solicitacao.titulo }}</span></div>
+                  {% if solicitacao.descricao %}<div class="admin-log-text">{{ solicitacao.descricao }}</div>{% endif %}
+                  {% for campo in solicitacao.campos %}<div class="admin-log-text"><strong>{{ campo.nome }}</strong><br>{{ campo.valor }}</div>{% endfor %}
+                  <p><a class="secondary-link" href="{{ solicitacao.url }}" target="_blank" rel="noopener">🔗 Abrir solicitação no Discord</a></p>
+                </article>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="empty-state">Nenhuma solicitação de Ban/Hackban encontrada no canal de aprovação.</div>
+          {% endif %}
+        </section>
+
         <section class="card">
           <div class="section-heading">
             <div>

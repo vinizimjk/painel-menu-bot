@@ -1,23 +1,31 @@
 {
-  "id": "rm-20260822-085247-manutencao-ia-notas-01",
-  "versao": "2026.08.22.1",
-  "data": "22/08/2026",
-  "titulo": "Atualização da Resenha Máxima",
+  "id": "2026-08-25-call-eventos",
+  "versao": "2026.08.25-call-eventos",
+  "data": "25/08/2026",
+  "titulo": "Notas de atualização",
   "novidades": [
-    "Modo de manutenção automático pela call de desenvolvimento, com proteção contra menções diretas ao programador.",
-    "Contador individual por usuário durante cada sessão de manutenção; na 5ª menção o bot tenta aplicar timeout de 1 minuto e publica uma zoeira no chat geral.",
-    "Novo sistema NOTA_ATUALIZACAO.json: cada manutenção possui um ID único e a publicação é controlada persistentemente em /data para impedir duplicações."
+    "📞 Call de desenvolvimento automática quando o ADM-G entra na call de dev.",
+    "🔇 O bot pode entrar silenciosamente em qualquer call quando solicitado.",
+    "🎵 Playlist opcional para a call de desenvolvimento; sem músicas válidas, o bot permanece em silêncio.",
+    "💬 Comandos naturais para chamar o bot para uma call, além dos comandos /.",
+    "🌐 Comando /site para acesso rápido ao painel da Resenha Máxima.",
+    "🏢 Configuração do servidor do Departamento de Eventos com candidatura e sincronização de cargos.",
+    "🔨 Banimento no servidor principal passa a ser sincronizado com o servidor de Eventos."
   ],
   "correcoes": [
-    "Removido o aviso automático de retorno da manutenção que ainda estava presente no código antigo.",
-    "Memória social da IA foi reforçada como contexto, não pauta; piadas internas ficaram mais raras e a piada de call do PK só pode aparecer quando o assunto atual já for call.",
-    "A IA ganhou memória de respostas recentes para reduzir repetição de bordões, estruturas e piadas próximas."
+    "📝 Notas de atualização voltam a usar o arquivo NOTA_ATUALIZACAO.json como fonte única.",
+    "🧹 Futuras atualizações são removidas por varredura do próprio canal, evitando duplicações.",
+    "🛡️ Painel e sistema de solicitações de Ban/Hackban permanecem vinculados ao canal de aprovação."
   ],
   "alteracoes": [
-    "Comandos /ia do Discord foram removidos; a configuração da IA passa a ser exclusivamente pelo painel web.",
-    "O modo IA causando agora atualiza a configuração remota do painel e usa a chance configurada no site.",
-    "A entrada automática da IA em call só é autorizada quando a mensagem atual realmente pede ou desafia o bot a entrar.",
-    "Ficha Funções do Bot atualizada com Minecraft, IA, voz e zoeira, eventos, entradas, painel web, moderação e administração."
+    "🔊 Zoarcall passa a usar no máximo 2 áudios por execução e evita repetir o mesmo áudio em sequência.",
+    "🧠 Quando houver 3 pessoas reais em call, o bot pode processar somente informações leves e relevantes para contexto social.",
+    "🧪 Conta secundária e bot de música não entram na contagem das 3 pessoas.",
+    "👤 No servidor de Eventos, Intruso fica limitado à candidatura até tentar entrar como Aprendiz.",
+    "📊 O canal de hierarquia pode ser preenchido automaticamente com os cargos criados pelo bot."
   ],
-  "problemas_conhecidos": []
+  "problemas_conhecidos": [
+    "🔧 A restauração de movimento, server mute e server deaf depende das permissões concedidas ao bot pelo Discord."
+  ],
+  "resumo": "Esta atualização consolida as mudanças recentes de call, servidor de Eventos, SITE, notas de atualização, moderação e contexto social do bot."
 }
