@@ -1791,10 +1791,14 @@ def configurar_servidor_pelo_site():
         return redirect(url_for("painel", aba="servidores"))
 
     try:
-        resultado = executar_no_bot(
+        if not TOKEN or not bot.is_ready() or BOT_LOOP is None:
+            raise RuntimeError("O bot do painel ainda não está conectado ao Discord.")
+
+        futuro = asyncio.run_coroutine_threadsafe(
             configurar_servidor_eventos(int(guild_id)),
-            timeout=90
+            BOT_LOOP
         )
+        resultado = futuro.result(timeout=120)
         flash(
             "✅ Servidor do Departamento de Eventos configurado: "
             f"{resultado['guild_name']}."
