@@ -23,6 +23,7 @@ if not PANEL_PASSWORD:
         "Crie essa variável no Railway antes de iniciar."
     )
 
+SITE_PUBLIC_URL = os.getenv("SITE_PUBLIC_URL", "https://resenha-maxima.up.railway.app").rstrip("/")
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -48,6 +49,7 @@ MAX_BOTOES = 25
 SERVIDORES_CONFIG_FILE = DATA_DIR / "servidores_config.json"
 CONTA_TESTE_EVENTOS_ID = 1532838576256057557
 CARGO_TESTE_EVENTOS_ID = 1536081355711062166
+GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/ZVhPQhdVZ6B3S25E9")
 
 CARGOS_EVENTOS = [
     ("Chef de Departamento", "chef"),
@@ -66,6 +68,7 @@ CANAIS_EVENTOS = [
         ("💡・sugestoes", "sugestoes"),
         ("📸・midias", "midias"),
         ("🤖・comandos", "comandos"),
+        ("📝・candidatura", "candidatura"),
         ("📜・regras", "regras"),
         ("⚠️・advertencias", "advertencias"),
         ("📊・hierarquia", "hierarquia"),
@@ -334,6 +337,7 @@ async def configurar_servidor_eventos(guild_id):
         categorias[nome_categoria] = await _obter_categoria(guild, nome_categoria)
 
     criados = []
+    canais_por_chave = {}
     for nome_categoria, canais in CANAIS_EVENTOS:
         categoria = categorias[nome_categoria]
         for nome_canal, chave in canais:
@@ -352,6 +356,9 @@ async def configurar_servidor_eventos(guild_id):
                 overwrites = overwrites_diretoria
             elif chave == "call":
                 overwrites = overwrites_voz
+            elif chave == "candidatura":
+                overwrites = dict(overwrites_geral)
+                overwrites[intruso] = _overwrite(allow=("view_channel", "read_message_history", "send_messages"))
             else:
                 overwrites = overwrites_geral
             try:
@@ -362,11 +369,41 @@ async def configurar_servidor_eventos(guild_id):
             except discord.HTTPException:
                 pass
             criados.append(canal.name)
+            canais_por_chave[chave] = canal
+
+    cargo_departamento = await _sincronizar_cargo_departamento_e_hierarquia(
+        guild,
+        roles,
+        canais_por_chave,
+    )
+
+    try:
+        candidatura = discord.utils.get(guild.text_channels, name="📝・candidatura") or discord.utils.get(guild.text_channels, name="candidatura")
+        if candidatura:
+            ultima = None
+            async for msg in candidatura.history(limit=20):
+                if msg.author.id == bot.user.id:
+                    ultima = msg
+                    break
+            texto = (
+                "# 📝 Candidatura — Departamento de Eventos\n\n"
+                "Entrou no servidor sem uma patente de Eventos? Faça a prova para tentar entrar como **Aprendiz de Eventos**.\n\n"
+                f"🎓 **Fazer prova:** {GOOGLE_FORMS_URL}\n\n"
+                "Após a prova, a avaliação/ticket continua sendo processada no servidor principal."
+            )
+            if ultima:
+                await ultima.edit(content=texto)
+            else:
+                await candidatura.send(content=texto)
+    except (discord.Forbidden, discord.HTTPException) as erro:
+        print(f"Erro ao publicar candidatura de Eventos: {erro}")
 
     dados = carregar_servidores_config()
     dados["eventos_guild_id"] = str(guild.id)
     dados["eventos_guild_nome"] = guild.name
     dados["roles"] = {chave: str(role.id) for chave, role in roles.items()}
+    dados["role_departamento_id"] = str(cargo_departamento.id)
+    dados["role_departamento_nome"] = cargo_departamento.name
     dados["role_names"] = {chave: role.name for chave, role in roles.items()}
     dados["configurado_em"] = __import__("datetime").datetime.now().isoformat()
     salvar_servidores_config(dados)
@@ -1223,6 +1260,15 @@ def somente_full(func):
 
     return wrapper
 
+
+@app.get("/api/site-account/<int:discord_id>")
+def api_site_account(discord_id):
+    dados = carregar_usuarios()
+    existe = any(str(registro.get("discord_id", "")) == str(discord_id) for registro in dados.get("usuarios", {}).values())
+    # A conta mestre também é uma conta válida.
+    if str(discord_id) == str(DONO_ID):
+        existe = True
+    return {"exists": bool(existe), "site": SITE_PUBLIC_URL}
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
