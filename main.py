@@ -51,6 +51,8 @@ SERVIDORES_CONFIG_FILE = DATA_DIR / "servidores_config.json"
 CONTA_TESTE_EVENTOS_ID = 1532838576256057557
 CARGO_TESTE_EVENTOS_ID = 1536081355711062166
 GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/gpvZhRAWc41CUurJ8")
+CARGO_ROBLOX_ID = 1540858217301549176
+CARGO_MINECRAFT_ID = 1534006899371147304
 
 CARGOS_EVENTOS = [
     ("Chef de Departamento", "chef"),
@@ -218,6 +220,90 @@ async def _obter_canal_voz(categoria, nome):
         reason="Configuração automática do Departamento de Eventos"
     )
 
+class CandidaturaEventosSelect(discord.ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="Selecione a prova que deseja fazer...",
+            min_values=1,
+            max_values=1,
+            custom_id="eventos_candidatura_prova_select",
+            options=[
+                discord.SelectOption(
+                    label="Verificar Roblox",
+                    value="roblox",
+                    emoji="🎮",
+                    description="Para quem possui o cargo de Roblox."
+                ),
+                discord.SelectOption(
+                    label="Verificar Minecraft",
+                    value="minecraft",
+                    emoji="⛏️",
+                    description="Para quem possui o cargo de Minecraft."
+                ),
+                discord.SelectOption(
+                    label="Verificar os dois",
+                    value="ambos",
+                    emoji="🎮",
+                    description="Para quem possui os cargos de Roblox e Minecraft."
+                ),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        membro = interaction.guild.get_member(interaction.user.id) if interaction.guild else None
+        if membro is None:
+            try:
+                membro = await interaction.guild.fetch_member(interaction.user.id)
+            except Exception:
+                membro = None
+
+        if membro is None:
+            await interaction.response.send_message("❌ Não consegui identificar seu usuário.", ephemeral=True)
+            return
+
+        valor = self.values[0]
+        tem_roblox = any(r.id == CARGO_ROBLOX_ID for r in membro.roles)
+        tem_minecraft = any(r.id == CARGO_MINECRAFT_ID for r in membro.roles)
+
+        if valor == "roblox" and not tem_roblox:
+            await interaction.response.send_message(
+                "❌ Você precisa ter o cargo de Roblox para fazer a verificação de Roblox.",
+                ephemeral=True,
+            )
+            return
+        if valor == "minecraft" and not tem_minecraft:
+            await interaction.response.send_message(
+                "❌ Você precisa ter o cargo de Minecraft para fazer a verificação de Minecraft.",
+                ephemeral=True,
+            )
+            return
+        if valor == "ambos" and not (tem_roblox and tem_minecraft):
+            await interaction.response.send_message(
+                "❌ Para escolher os dois, você precisa ter os cargos de Roblox e Minecraft.",
+                ephemeral=True,
+            )
+            return
+
+        if valor == "roblox":
+            descricao = "Você selecionou **Verificar Roblox**."
+        elif valor == "minecraft":
+            descricao = "Você selecionou **Verificar Minecraft**."
+        else:
+            descricao = "Você selecionou **Verificar os dois**."
+
+        await interaction.response.send_message(
+            f"{descricao}\n\n🎓 **Faça sua prova aqui:** {GOOGLE_FORMS_URL}\n\n"
+            "Depois de enviar o formulário, siga as instruções que o bot informar para concluir sua candidatura.",
+            ephemeral=True,
+        )
+
+
+class CandidaturaEventosView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(CandidaturaEventosSelect())
+
+
 async def configurar_servidor_eventos(guild_id):
     guild = bot.get_guild(int(guild_id))
     if guild is None:
@@ -379,25 +465,46 @@ async def configurar_servidor_eventos(guild_id):
     )
 
     try:
-        candidatura = discord.utils.get(guild.text_channels, name="📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂") or discord.utils.get(guild.text_channels, name="candidatura")
+        candidatura = canais_por_chave.get("candidatura")
+        if candidatura is None:
+            candidatura = discord.utils.get(
+                guild.text_channels, name="📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂"
+            )
         if candidatura:
+            # Garante que a view sobreviva a reinícios/deploys.
+            try:
+                bot.add_view(CandidaturaEventosView())
+            except Exception:
+                pass
+
+            embed = discord.Embed(
+                title="📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂",
+                description=(
+                    "Quer entrar para o **Departamento de Eventos**?\n\n"
+                    "Selecione abaixo a verificação que deseja fazer.\n\n"
+                    "🎮 **Verificar Roblox** — disponível para quem possui o cargo de Roblox.\n"
+                    "⛏️ **Verificar Minecraft** — disponível para quem possui o cargo de Minecraft.\n"
+                    "🎮 **Verificar os dois** — disponível para quem possui os dois cargos.\n\n"
+                    "Depois de selecionar, o bot enviará o link da prova.\n"
+                    "A avaliação/ticket continua sendo processada no servidor principal."
+                ),
+                color=discord.Color.blurple(),
+            )
+            embed.set_footer(text="Departamento de Eventos • Candidatura")
+
             ultima = None
-            async for msg in candidatura.history(limit=20):
-                if msg.author.id == bot.user.id:
+            async for msg in candidatura.history(limit=50):
+                if msg.author.id == bot.user.id and msg.components:
                     ultima = msg
                     break
-            texto = (
-                "# 📝 Candidatura — Departamento de Eventos\n\n"
-                "Entrou no servidor sem uma patente de Eventos? Faça a prova para tentar entrar como **Aprendiz de Eventos**.\n\n"
-                f"🎓 **Fazer prova:** {GOOGLE_FORMS_URL}\n\n"
-                "Após a prova, a avaliação/ticket continua sendo processada no servidor principal."
-            )
+
+            view = CandidaturaEventosView()
             if ultima:
-                await ultima.edit(content=texto)
+                await ultima.edit(embed=embed, view=view, content=None)
             else:
-                await candidatura.send(content=texto)
+                await candidatura.send(embed=embed, view=view)
     except (discord.Forbidden, discord.HTTPException) as erro:
-        print(f"Erro ao publicar candidatura de Eventos: {erro}")
+        print(f"Erro ao publicar menu de candidatura de Eventos: {erro}")
 
     dados = carregar_servidores_config()
     dados["eventos_guild_id"] = str(guild.id)
@@ -675,6 +782,10 @@ class MenuView(discord.ui.View):
 
 def registrar_views_persistentes():
     """Reativa os botões dos menus salvos após reinício/deploy."""
+    try:
+        bot.add_view(CandidaturaEventosView())
+    except Exception as erro:
+        print(f"Erro ao registrar view persistente de candidatura: {erro}")
     if getattr(bot, "_views_menus_registradas", False):
         return
 
