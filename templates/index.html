@@ -378,8 +378,7 @@ alt="Avatar Resenha Máxima">
         <span class="eyebrow gold">SOMENTE LEITURA</span>
         <h2>💬 Modelos de mensagens do bot</h2>
         <p class="muted">
-          Aqui ficam os principais modelos usados pelo bot.
-          Nesta versão eles ainda não podem ser editados.
+          Aqui ficam os principais modelos usados pelo bot, incluindo os modelos de candidatura e eventos.
         </p>
 
         <div class="message-model-grid">
@@ -413,30 +412,7 @@ alt="Avatar Resenha Máxima">
 
         <div class="admin-grid">
           <article class="card">
-            <span class="eyebrow gold">SERVIDOR ATIVO DO PAINEL</span>
-            <h3>🔄 Trocar servidor</h3>
-            <p class="muted">
-              O painel passa a buscar cargos, canais e permissões do servidor selecionado.
-            </p>
-            <form method="post" action="{{ url_for('selecionar_servidor_pelo_site') }}" class="user-create-form">
-              <label for="servidor-ativo">Servidor</label>
-              <select id="servidor-ativo" name="guild_id" required>
-                {% for servidor in servidores_painel %}
-                  <option value="{{ servidor.id }}" {% if servidor.id == servidor_ativo_id %}selected{% endif %}>
-                    {% if servidor.principal %}🏠{% else %}🏢{% endif %} {{ servidor.nome }} — {{ servidor.membros }} membro(s)
-                  </option>
-                {% endfor %}
-              </select>
-              <button type="submit">🔄 Usar este servidor</button>
-            </form>
-            <div class="success">
-              Servidor atualmente selecionado: <strong>{{ servidor_ativo_nome }}</strong>
-            </div>
-          </article>
-
-          <article class="card">
             <span class="eyebrow">SERVIDOR PRINCIPAL</span>
-
             <h3>🏠 RESENHA MÁXIMA</h3>
             <p class="muted">
               {{ servidor_eventos_config.principal_id or 'ID do servidor principal configurado pela variável GUILD_ID.' }}
@@ -555,9 +531,22 @@ alt="Avatar Resenha Máxima">
       <section class="card">
         <span class="eyebrow">PLANEJADO</span>
         <h2>🔮 Futuras atualizações</h2>
+        <form method="post" action="{{ url_for('adicionar_futura_atualizacao') }}" class="user-create-form">
+          <label for="futura_atualizacao">Adicionar futura atualização</label>
+          <textarea id="futura_atualizacao" name="texto" maxlength="1000" required placeholder="Ex.: Adicionar verificação do Roblox no servidor de Eventos."></textarea>
+          <button type="submit">➕ Adicionar</button>
+        </form>
         {% if futuras_atualizacoes %}
           <ul>
-            {% for item in futuras_atualizacoes %}<li>{{ item }}</li>{% endfor %}
+            {% for item in futuras_atualizacoes %}
+              <li style="margin-bottom:8px;">
+                {{ item }}
+                <form method="post" action="{{ url_for('remover_futura_atualizacao') }}" style="display:inline; margin-left:8px;">
+                  <input type="hidden" name="texto" value="{{ item }}">
+                  <button type="submit">🗑️</button>
+                </form>
+              </li>
+            {% endfor %}
           </ul>
         {% else %}
           <div class="empty-state">Nenhuma futura atualização cadastrada.</div>

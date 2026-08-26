@@ -50,7 +50,7 @@ MAX_BOTOES = 25
 SERVIDORES_CONFIG_FILE = DATA_DIR / "servidores_config.json"
 CONTA_TESTE_EVENTOS_ID = 1532838576256057557
 CARGO_TESTE_EVENTOS_ID = 1536081355711062166
-GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/ZVhPQhdVZ6B3S25E9")
+GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/gpvZhRAWc41CUurJ8")
 
 CARGOS_EVENTOS = [
     ("Chef de Departamento", "chef"),
@@ -69,7 +69,7 @@ CANAIS_EVENTOS = [
         ("💡・sugestoes", "sugestoes"),
         ("📸・midias", "midias"),
         ("🤖・comandos", "comandos"),
-        ("📝・candidatura", "candidatura"),
+        ("📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂", "candidatura"),
         ("📜・regras", "regras"),
         ("⚠️・advertencias", "advertencias"),
         ("📊・hierarquia", "hierarquia"),
@@ -379,7 +379,7 @@ async def configurar_servidor_eventos(guild_id):
     )
 
     try:
-        candidatura = discord.utils.get(guild.text_channels, name="📝・candidatura") or discord.utils.get(guild.text_channels, name="candidatura")
+        candidatura = discord.utils.get(guild.text_channels, name="📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂") or discord.utils.get(guild.text_channels, name="candidatura")
         if candidatura:
             ultima = None
             async for msg in candidatura.history(limit=20):
@@ -892,6 +892,19 @@ _users_lock = threading.Lock()
 
 MODELOS_MENSAGENS = [
     {
+        "categoria": "Eventos",
+        "titulo": "Candidatura — link da prova",
+        "destino": "Canal de candidatura",
+        "conteudo": "📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂\n\nFaça a prova para tentar entrar como Aprendiz de Eventos.\n\n🎓 Fazer prova: https://forms.gle/gpvZhRAWc41CUurJ8",
+    },
+    {
+        "categoria": "Eventos",
+        "titulo": "Intruso — acesso inicial",
+        "destino": "Servidor do Departamento de Eventos",
+        "conteudo": "Você entrou como Intruso. O acesso ao restante do servidor é liberado somente após aprovação da candidatura.",
+    },
+
+    {
         "categoria": "Minecraft",
         "titulo": "Solicitação de nickname",
         "destino": "DM do membro",
@@ -1034,36 +1047,19 @@ def normalizar_nome_cargo(nome):
     )
 
 
-def servidores_disponiveis_painel():
-    principal = str(GUILD_ID or "")
-    resultado = []
-    for guild in sorted(bot.guilds, key=lambda g: g.name.casefold()):
-        resultado.append({
-            "id": str(guild.id),
-            "nome": guild.name,
-            "membros": getattr(guild, "member_count", None) or 0,
-            "principal": str(guild.id) == principal,
-        })
-    return resultado
-
 def obter_guild_painel():
-    # O painel pode trabalhar com o servidor principal ou com qualquer
-    # servidor onde o bot esteja instalado. A escolha fica por sessão.
-    selecionado = str(session.get("servidor_ativo_id") or "").strip()
-    if selecionado.isdigit():
-        guild = bot.get_guild(int(selecionado))
-        if guild is not None:
-            return guild
+    guild = None
 
     if GUILD_ID:
         try:
             guild = bot.get_guild(int(GUILD_ID))
         except ValueError:
             guild = None
-        if guild is not None:
-            return guild
 
-    return bot.guilds[0] if bot.guilds else None
+    if guild is None and bot.guilds:
+        guild = bot.guilds[0]
+
+    return guild
 
 
 async def verificar_permissao_discord(discord_id):
@@ -1618,14 +1614,7 @@ def contexto_painel(
         else []
     )
 
-    servidor_ativo = obter_guild_painel()
-    servidor_ativo_id = str(servidor_ativo.id) if servidor_ativo else ""
-    servidor_ativo_nome = servidor_ativo.name if servidor_ativo else "Nenhum servidor"
-
     return {
-        "servidores_painel": servidores_disponiveis_painel(),
-        "servidor_ativo_id": servidor_ativo_id,
-        "servidor_ativo_nome": servidor_ativo_nome,
         "servidores_eventos": servidores_disponiveis_eventos(),
         "servidor_eventos_config": carregar_servidores_config(),
         "aba": aba,
@@ -1939,24 +1928,6 @@ def painel():
 
 
 
-@app.route("/servidor/selecionar", methods=["POST"])
-@somente_full
-def selecionar_servidor_pelo_site():
-    guild_id = request.form.get("guild_id", "").strip()
-    if not guild_id.isdigit():
-        flash("❌ Servidor inválido.")
-        return redirect(url_for("painel", aba="servidores"))
-
-    guild = bot.get_guild(int(guild_id)) if bot.is_ready() else None
-    if guild is None:
-        flash("❌ O bot não está nesse servidor ou ainda não está conectado.")
-        return redirect(url_for("painel", aba="servidores"))
-
-    session["servidor_ativo_id"] = str(guild.id)
-    session.modified = True
-    flash(f"✅ Servidor ativo alterado para {guild.name}.")
-    return redirect(url_for("painel", aba="servidores"))
-
 @app.route("/servidores", methods=["POST"])
 @somente_full
 def configurar_servidor_pelo_site():
@@ -1974,10 +1945,8 @@ def configurar_servidor_pelo_site():
             BOT_LOOP
         )
         resultado = futuro.result(timeout=120)
-        session["servidor_ativo_id"] = str(resultado["guild_id"])
-        session.modified = True
         flash(
-            "✅ Servidor do Departamento de Eventos configurado e selecionado: "
+            "✅ Servidor do Departamento de Eventos configurado: "
             f"{resultado['guild_name']}."
         )
     except Exception as erro:
@@ -2110,6 +2079,43 @@ def excluir_usuario_painel(usuario):
         )
     )
 
+
+@app.route("/atualizacoes/futuras/adicionar", methods=["POST"])
+@somente_full
+def adicionar_futura_atualizacao():
+    texto = request.form.get("texto", "").strip()
+    if not texto:
+        flash("❌ Informe a futura atualização.")
+        return redirect(url_for("painel", aba="atualizacoes"))
+    caminho = Path(__file__).parent / "FUTURAS_ATUALIZACOES.json"
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8")) if caminho.exists() else []
+        if not isinstance(dados, list):
+            dados = []
+        if texto not in dados:
+            dados.append(texto)
+            caminho.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+            flash("✅ Futura atualização adicionada.")
+        else:
+            flash("ℹ️ Essa futura atualização já está cadastrada.")
+    except Exception as erro:
+        flash(f"❌ Não foi possível salvar: {erro}")
+    return redirect(url_for("painel", aba="atualizacoes"))
+
+@app.route("/atualizacoes/futuras/remover", methods=["POST"])
+@somente_full
+def remover_futura_atualizacao():
+    texto = request.form.get("texto", "").strip()
+    caminho = Path(__file__).parent / "FUTURAS_ATUALIZACOES.json"
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8")) if caminho.exists() else []
+        if not isinstance(dados, list): dados = []
+        dados = [item for item in dados if str(item) != texto]
+        caminho.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+        flash("🗑️ Futura atualização removida.")
+    except Exception as erro:
+        flash(f"❌ Não foi possível remover: {erro}")
+    return redirect(url_for("painel", aba="atualizacoes"))
 
 @app.route("/status")
 def status():
