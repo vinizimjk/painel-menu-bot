@@ -1034,19 +1034,36 @@ def normalizar_nome_cargo(nome):
     )
 
 
+def servidores_disponiveis_painel():
+    principal = str(GUILD_ID or "")
+    resultado = []
+    for guild in sorted(bot.guilds, key=lambda g: g.name.casefold()):
+        resultado.append({
+            "id": str(guild.id),
+            "nome": guild.name,
+            "membros": getattr(guild, "member_count", None) or 0,
+            "principal": str(guild.id) == principal,
+        })
+    return resultado
+
 def obter_guild_painel():
-    guild = None
+    # O painel pode trabalhar com o servidor principal ou com qualquer
+    # servidor onde o bot esteja instalado. A escolha fica por sessão.
+    selecionado = str(session.get("servidor_ativo_id") or "").strip()
+    if selecionado.isdigit():
+        guild = bot.get_guild(int(selecionado))
+        if guild is not None:
+            return guild
 
     if GUILD_ID:
         try:
             guild = bot.get_guild(int(GUILD_ID))
         except ValueError:
             guild = None
+        if guild is not None:
+            return guild
 
-    if guild is None and bot.guilds:
-        guild = bot.guilds[0]
-
-    return guild
+    return bot.guilds[0] if bot.guilds else None
 
 
 async def verificar_permissao_discord(discord_id):
@@ -1601,7 +1618,14 @@ def contexto_painel(
         else []
     )
 
+    servidor_ativo = obter_guild_painel()
+    servidor_ativo_id = str(servidor_ativo.id) if servidor_ativo else ""
+    servidor_ativo_nome = servidor_ativo.name if servidor_ativo else "Nenhum servidor"
+
     return {
+        "servidores_painel": servidores_disponiveis_painel(),
+        "servidor_ativo_id": servidor_ativo_id,
+        "servidor_ativo_nome": servidor_ativo_nome,
         "servidores_eventos": servidores_disponiveis_eventos(),
         "servidor_eventos_config": carregar_servidores_config(),
         "aba": aba,
@@ -1915,6 +1939,24 @@ def painel():
 
 
 
+@app.route("/servidor/selecionar", methods=["POST"])
+@somente_full
+def selecionar_servidor_pelo_site():
+    guild_id = request.form.get("guild_id", "").strip()
+    if not guild_id.isdigit():
+        flash("❌ Servidor inválido.")
+        return redirect(url_for("painel", aba="servidores"))
+
+    guild = bot.get_guild(int(guild_id)) if bot.is_ready() else None
+    if guild is None:
+        flash("❌ O bot não está nesse servidor ou ainda não está conectado.")
+        return redirect(url_for("painel", aba="servidores"))
+
+    session["servidor_ativo_id"] = str(guild.id)
+    session.modified = True
+    flash(f"✅ Servidor ativo alterado para {guild.name}.")
+    return redirect(url_for("painel", aba="servidores"))
+
 @app.route("/servidores", methods=["POST"])
 @somente_full
 def configurar_servidor_pelo_site():
@@ -1932,8 +1974,10 @@ def configurar_servidor_pelo_site():
             BOT_LOOP
         )
         resultado = futuro.result(timeout=120)
+        session["servidor_ativo_id"] = str(resultado["guild_id"])
+        session.modified = True
         flash(
-            "✅ Servidor do Departamento de Eventos configurado: "
+            "✅ Servidor do Departamento de Eventos configurado e selecionado: "
             f"{resultado['guild_name']}."
         )
     except Exception as erro:

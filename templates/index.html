@@ -413,7 +413,30 @@ alt="Avatar Resenha Máxima">
 
         <div class="admin-grid">
           <article class="card">
+            <span class="eyebrow gold">SERVIDOR ATIVO DO PAINEL</span>
+            <h3>🔄 Trocar servidor</h3>
+            <p class="muted">
+              O painel passa a buscar cargos, canais e permissões do servidor selecionado.
+            </p>
+            <form method="post" action="{{ url_for('selecionar_servidor_pelo_site') }}" class="user-create-form">
+              <label for="servidor-ativo">Servidor</label>
+              <select id="servidor-ativo" name="guild_id" required>
+                {% for servidor in servidores_painel %}
+                  <option value="{{ servidor.id }}" {% if servidor.id == servidor_ativo_id %}selected{% endif %}>
+                    {% if servidor.principal %}🏠{% else %}🏢{% endif %} {{ servidor.nome }} — {{ servidor.membros }} membro(s)
+                  </option>
+                {% endfor %}
+              </select>
+              <button type="submit">🔄 Usar este servidor</button>
+            </form>
+            <div class="success">
+              Servidor atualmente selecionado: <strong>{{ servidor_ativo_nome }}</strong>
+            </div>
+          </article>
+
+          <article class="card">
             <span class="eyebrow">SERVIDOR PRINCIPAL</span>
+
             <h3>🏠 RESENHA MÁXIMA</h3>
             <p class="muted">
               {{ servidor_eventos_config.principal_id or 'ID do servidor principal configurado pela variável GUILD_ID.' }}
