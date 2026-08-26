@@ -304,6 +304,51 @@ class CandidaturaEventosView(discord.ui.View):
         self.add_item(CandidaturaEventosSelect())
 
 
+async def _sincronizar_cargo_departamento_e_hierarquia(guild_eventos, roles, canais_por_chave):
+    """Cria o cargo agregador do Departamento e sincroniza membros já reconhecidos no principal.
+
+    A sincronização é conservadora: usa CARGO_EVENTOS_ID quando configurado e não remove
+    cargos de hierarquia já existentes no servidor de Eventos.
+    """
+    cargo_departamento = await _buscar_ou_criar_role(
+        guild_eventos,
+        "Departamento de Eventos",
+        permissions=discord.Permissions.none(),
+        hoist=True,
+    )
+
+    principal = bot.get_guild(int(GUILD_ID)) if str(GUILD_ID or "").isdigit() else None
+    cargo_origem = None
+    if principal is not None and CARGO_EVENTOS_ID:
+        cargo_origem = principal.get_role(CARGO_EVENTOS_ID)
+
+    if cargo_origem is not None:
+        ids_departamento = {m.id for m in cargo_origem.members if not m.bot}
+        for membro_id in ids_departamento:
+            membro_eventos = guild_eventos.get_member(membro_id)
+            if membro_eventos is None:
+                try:
+                    membro_eventos = await guild_eventos.fetch_member(membro_id)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    continue
+            adicionar = []
+            if cargo_departamento not in membro_eventos.roles:
+                adicionar.append(cargo_departamento)
+            # Quem já pertence ao Departamento e ainda não tem nível definido começa como Aprendiz.
+            if not any(role in membro_eventos.roles for role in roles.values()):
+                adicionar.append(roles["aprendiz"])
+            if adicionar:
+                try:
+                    await membro_eventos.add_roles(
+                        *adicionar,
+                        reason="Sincronização com o servidor principal RESENHA MÁXIMA",
+                    )
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+    return cargo_departamento
+
+
 async def configurar_servidor_eventos(guild_id):
     guild = bot.get_guild(int(guild_id))
     if guild is None:
@@ -445,7 +490,7 @@ async def configurar_servidor_eventos(guild_id):
                 overwrites = overwrites_voz
             elif chave == "candidatura":
                 overwrites = dict(overwrites_geral)
-                overwrites[intruso] = _overwrite(allow=("view_channel", "read_message_history", "send_messages"))
+                overwrites[intruso] = _overwrite(allow=("view_channel", "read_message_history"), deny=("send_messages",))
             else:
                 overwrites = overwrites_geral
             try:
