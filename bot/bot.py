@@ -7284,6 +7284,106 @@ async def antes_ia_caos_automatico():
 # Os antigos comandos /ia foram removidos. O bot lê /api/ia-config.
 
 
+
+# ==========================================================
+# ANTISPAM DE MENÇÕES — RAJADAS
+# ==========================================================
+_MENCAO_SPAM_JANELA = 8.0
+_MENCAO_SPAM_BLOQUEIO = 45.0
+_MENCAO_SPAM_MSG_LIMITE = 5
+_MENCAO_SPAM_TOTAL_LIMITE = 8
+_MENCAO_SPAM_ALVO_LIMITE = 4
+_mencao_spam_estado = {}
+_mencao_spam_bloqueados = {}
+_mencao_spam_lock = {}
+
+
+def _ids_mencionados_diretamente(message):
+    texto = str(message.content or "")
+    return [int(x) for x in re.findall(r"<@!?(\\d+)>", texto)]
+
+
+async def processar_antispam_mencoes(message: discord.Message):
+    if message.guild is None or message.author.bot:
+        return False
+    if message.author.id == DONO_ID:
+        return False
+
+    ids = _ids_mencionados_diretamente(message)
+    if not ids:
+        return False
+
+    # A proteção especial da call DEV tem sua própria contagem/aviso.
+    if DONO_ID in ids and dono_esta_na_call_manutencao(message.guild):
+        return False
+
+    agora = time.monotonic()
+    uid = message.author.id
+
+    bloqueado_ate = _mencao_spam_bloqueados.get(uid, 0.0)
+    if agora < bloqueado_ate:
+        try:
+            await message.delete()
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+            pass
+        return True
+
+    estado = _mencao_spam_estado.setdefault(uid, deque())
+    estado.append((agora, message, ids))
+    while estado and agora - estado[0][0] > _MENCAO_SPAM_JANELA:
+        estado.popleft()
+
+    qtd_msgs = len(estado)
+    total_mencoes = sum(len(item[2]) for item in estado)
+    por_alvo = {}
+    for _, _, alvos in estado:
+        for alvo in alvos:
+            por_alvo[alvo] = por_alvo.get(alvo, 0) + 1
+    repeticao_max = max(por_alvo.values(), default=0)
+
+    disparou = (
+        qtd_msgs >= _MENCAO_SPAM_MSG_LIMITE
+        or total_mencoes >= _MENCAO_SPAM_TOTAL_LIMITE
+        or repeticao_max >= _MENCAO_SPAM_ALVO_LIMITE
+    )
+    if not disparou:
+        return False
+
+    # Bloqueia primeiro para impedir novas mensagens enquanto apaga a rajada.
+    _mencao_spam_bloqueados[uid] = agora + _MENCAO_SPAM_BLOQUEIO
+    lock = _mencao_spam_lock.setdefault(uid, asyncio.Lock())
+    if lock.locked():
+        return True
+
+    async with lock:
+        membro = message.author if isinstance(message.author, discord.Member) else None
+        if membro is not None:
+            try:
+                await membro.timeout(
+                    timedelta(minutes=1),
+                    reason="Rajada de menções detectada pelo antispam"
+                )
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+        mensagens = []
+        vistos = set()
+        for _, msg, _ in list(estado):
+            if msg.id not in vistos:
+                vistos.add(msg.id)
+                mensagens.append(msg)
+        # PartialMessage.delete não aceita reason; não passar reason aqui.
+        for msg in reversed(mensagens):
+            try:
+                await msg.delete()
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                pass
+
+        estado.clear()
+
+    return True
+
+
 # ==========================================================
 # MODO MANUTENÇÃO — CALL DE DESENVOLVIMENTO
 # ==========================================================
@@ -7505,6 +7605,41 @@ async def processar_protecao_manutencao(message: discord.Message):
     return True
 
 
+
+
+async def entrar_call_dev_automaticamente(guild, canal=None):
+    canal = canal or guild.get_channel(CANAL_CALL_MANUTENCAO_ID)
+    if not isinstance(canal, discord.VoiceChannel):
+        try:
+            buscado = await bot.fetch_channel(CANAL_CALL_MANUTENCAO_ID)
+            canal = buscado if isinstance(buscado, discord.VoiceChannel) else None
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            canal = None
+    if canal is None or canal.guild.id != guild.id:
+        return False, "call DEV não encontrada neste servidor"
+
+    me = guild.me
+    if me is None:
+        return False, "membro do bot não encontrado"
+    perms = canal.permissions_for(me)
+    if not perms.connect:
+        return False, "sem permissão Connect na call DEV"
+
+    try:
+        voice = guild.voice_client
+        if voice is None or not voice.is_connected():
+            voice = await canal.connect(self_mute=False, self_deaf=False)
+        elif voice.channel.id != canal.id:
+            await voice.move_to(canal)
+        try:
+            await guild.change_voice_state(channel=canal, self_mute=False, self_deaf=False)
+        except Exception:
+            pass
+        return True, None
+    except Exception as erro:
+        return False, f"{type(erro).__name__}: {erro}"
+
+
 @bot.event
 async def on_voice_state_update(member, before, after):
     if member.id != DONO_ID:
@@ -7522,6 +7657,9 @@ async def on_voice_state_update(member, before, after):
     if not antes_manutencao and depois_manutencao:
         iniciar_sessao_manutencao()
         print("Modo manutenção: ATIVO — nova sessão iniciada.")
+        ok, erro = await entrar_call_dev_automaticamente(member.guild, after.channel)
+        if not ok:
+            print(f"Falha ao entrar automaticamente na call DEV: {erro}")
     elif antes_manutencao and not depois_manutencao:
         resetar_sessao_manutencao()
         print("Modo manutenção: ENCERRADO — contadores zerados.")
@@ -7592,6 +7730,11 @@ async def on_message(
                         "solicitar um novo cadastro."
                     )
                     return
+
+    bloqueou_spam_mencoes = await processar_antispam_mencoes(message)
+    if bloqueou_spam_mencoes:
+        await bot.process_commands(message)
+        return
 
     tratado_manutencao = await processar_protecao_manutencao(
         message
@@ -9733,6 +9876,9 @@ async def on_ready():
         for guild in bot.guilds:
             if dono_esta_na_call_manutencao(guild):
                 iniciar_sessao_manutencao()
+                ok, erro = await entrar_call_dev_automaticamente(guild)
+                if not ok:
+                    print(f"Falha ao restaurar conexão na call DEV: {erro}")
                 break
 
     if not getattr(
