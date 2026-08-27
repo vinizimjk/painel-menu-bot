@@ -3,6 +3,7 @@ import os
 import json
 import threading
 import secrets
+import unicodedata
 from copy import deepcopy
 from pathlib import Path
 from functools import wraps
@@ -56,7 +57,7 @@ CARGO_ROBLOX_ID = 1540858217301549176
 CARGO_MINECRAFT_ID = 1534006899371147304
 CANAL_CANDIDATURA_PRINCIPAL_ID = int(os.getenv("CANAL_CANDIDATURA_PRINCIPAL_ID", "1541035337709649990") or "1541035337709649990")
 FORM_WEBHOOK_SECRET = (os.getenv("FORM_WEBHOOK_SECRET") or os.getenv("EVENTOS_SECRET") or "").strip()
-EVENTOS_PREFILL_SCRIPT_URL = os.getenv("EVENTOS_PREFILL_SCRIPT_URL", "").strip()
+EVENTOS_PREFILL_SCRIPT_URL = os.getenv("EVENTOS_PREFILL_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbxkCj_GHByDB1fGiWIB5afuKSseh3akjYb2cwrFNubeaBpeL5mf2LnltEpx8zroIvn7MQ/exec").strip()
 EVENTOS_PREFILL_CONFIG_FILE = DATA_DIR / "eventos_prefill.json"
 EVENTOS_GUILD_ID = int(os.getenv("EVENTOS_GUILD_ID", "1541541588122079283") or "1541541588122079283")
 CANDIDATURA_CODES_FILE = DATA_DIR / "candidatura_codes.json"
@@ -377,42 +378,93 @@ def _embed_menu_candidatura():
     return embed
 
 
-async def _publicar_ou_atualizar_menu(canal):
-    ultima = None
+def _normalizar_nome_discord(valor):
+    # NFKD transforma letras matemáticas/estilizadas em letras comuns.
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    return "".join(ch for ch in texto.casefold() if ch.isalnum())
+
+
+def _eh_canal_candidatura_eventos(canal):
+    nome = _normalizar_nome_discord(getattr(canal, "name", ""))
+    return "candidatura" in nome
+
+
+def _localizar_canal_candidatura_eventos(guild):
+    # 1) Usa o ID salvo quando ele ainda existe.
     try:
-        async for msg in canal.history(limit=50):
-            if msg.author.id != bot.user.id:
-                continue
+        cfg = carregar_servidores_config()
+        canal_id = int(cfg.get("candidatura_channel_id") or 0)
+    except (TypeError, ValueError):
+        canal_id = 0
+    if canal_id:
+        canal = guild.get_channel(canal_id)
+        if isinstance(canal, discord.TextChannel):
+            return canal
 
-            ids = set()
-            if msg.components:
-                ids = {
-                    getattr(comp, "custom_id", None)
-                    for row in msg.components
-                    for comp in getattr(row, "children", [])
-                }
-            if "eventos_candidatura_informacoes" in ids or "eventos_candidatura_fazer" in ids:
-                ultima = msg
-                break
+    # 2) Aceita nomes normais ou com fontes Unicode, como
+    #    📜・Candidatura e 📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂.
+    candidatos = [c for c in guild.text_channels if _eh_canal_candidatura_eventos(c)]
+    if not candidatos:
+        return None
 
-            # Aproveita a mensagem antiga da candidatura (ex.: menu Roblox/Minecraft)
-            # em vez de mandar uma segunda mensagem e deixar o menu antigo no canal.
-            texto_embed = " ".join(
-                f"{getattr(embed, 'title', '')} {getattr(embed, 'description', '')}"
-                for embed in msg.embeds
-            ).casefold()
-            if "candidatura" in texto_embed and (msg.components or msg.embeds):
-                ultima = msg
-                break
+    # Prefere o canal fora de categorias/mais antigo quando houver duplicatas,
+    # pois é o formato do canal já existente mostrado no servidor de Eventos.
+    candidatos.sort(key=lambda c: (c.category is not None, c.position, c.id))
+    return candidatos[0]
+
+
+def _mensagem_parece_menu_candidatura(msg):
+    if msg.author.id != bot.user.id:
+        return False
+
+    ids = set()
+    for row in msg.components or []:
+        for comp in getattr(row, "children", []):
+            cid = getattr(comp, "custom_id", None)
+            if cid:
+                ids.add(cid)
+    if {"eventos_candidatura_informacoes", "eventos_candidatura_fazer"} & ids:
+        return True
+
+    texto = " ".join(
+        f"{getattr(embed, 'title', '')} {getattr(embed, 'description', '')}"
+        for embed in msg.embeds
+    ).casefold()
+    if "candidatura" in texto:
+        return True
+    if "verificar roblox" in texto or "verificar minecraft" in texto:
+        return True
+    return False
+
+
+async def _publicar_ou_atualizar_menu(canal):
+    # Procura tanto o menu novo quanto o menu antigo Roblox/Minecraft e mantém
+    # somente um painel de candidatura no canal.
+    encontradas = []
+    try:
+        async for msg in canal.history(limit=100):
+            if _mensagem_parece_menu_candidatura(msg):
+                encontradas.append(msg)
     except (discord.Forbidden, discord.HTTPException):
-        ultima = None
+        encontradas = []
 
     view = CandidaturaEventosView()
     embed = _embed_menu_candidatura()
-    if ultima:
-        await ultima.edit(content=None, embed=embed, view=view)
-    else:
-        await canal.send(embed=embed, view=view)
+
+    if encontradas:
+        # history() retorna da mais recente para a mais antiga. Editamos a mais
+        # recente e removemos menus antigos duplicados do próprio bot.
+        principal = encontradas[0]
+        await principal.edit(content=None, embed=embed, view=view)
+        for antiga in encontradas[1:]:
+            try:
+                await antiga.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+        return principal
+
+    return await canal.send(embed=embed, view=view)
 
 
 async def publicar_menu_candidatura_principal():
@@ -425,6 +477,28 @@ async def publicar_menu_candidatura_principal():
     if not isinstance(canal, discord.TextChannel):
         return False
     await _publicar_ou_atualizar_menu(canal)
+    return True
+
+
+async def atualizar_menu_candidatura_eventos_existente(guild_id):
+    """Atualiza o painel no canal existente sem criar canal/categoria/cargo."""
+    guild = bot.get_guild(int(guild_id))
+    if guild is None:
+        return False
+    canal = _localizar_canal_candidatura_eventos(guild)
+    if canal is None:
+        return False
+    await _publicar_ou_atualizar_menu(canal)
+
+    # Salva o ID encontrado para as próximas inicializações.
+    try:
+        dados = carregar_servidores_config()
+        dados["eventos_guild_id"] = str(guild.id)
+        dados["eventos_guild_nome"] = guild.name
+        dados["candidatura_channel_id"] = str(canal.id)
+        salvar_servidores_config(dados)
+    except OSError:
+        pass
     return True
 
 
@@ -449,13 +523,12 @@ async def configurar_servidor_eventos(guild_id):
             reason="Acesso inicial à candidatura do Departamento de Eventos",
         )
 
-    candidatura = discord.utils.get(guild.text_channels, name="📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝑹𝒂")
+    candidatura = _localizar_canal_candidatura_eventos(guild)
     if candidatura is None:
-        # Não cria categoria nova: usa a primeira categoria existente quando possível.
-        categoria = guild.categories[0] if guild.categories else None
+        # Só cria o canal quando a configuração for solicitada explicitamente e
+        # nenhum canal de candidatura (normal ou estilizado) já existir.
         candidatura = await guild.create_text_channel(
-            "📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝑼𝑹𝒂",
-            category=categoria,
+            "📜・Candidatura",
             reason="Canal de candidatura do Departamento de Eventos",
         )
 
@@ -1210,14 +1283,15 @@ async def on_ready():
     except Exception as erro:
         print(f"Erro ao publicar menu de candidatura no servidor principal: {erro}")
 
-    # Atualiza também o canal JÁ EXISTENTE do Departamento de Eventos.
-    # Esta rotina não duplica a estrutura: configurar_servidor_eventos cria,
-    # no máximo, o canal de candidatura se ele realmente não existir.
+    # No startup, SOMENTE atualiza o canal de candidatura que já existe no
+    # Departamento de Eventos. Nunca cria canais/categorias/cargos aqui.
     try:
         cfg_eventos = carregar_servidores_config()
         guild_eventos_id = int(cfg_eventos.get("eventos_guild_id") or EVENTOS_GUILD_ID or 0)
         if guild_eventos_id and bot.get_guild(guild_eventos_id):
-            await configurar_servidor_eventos(guild_eventos_id)
+            atualizado = await atualizar_menu_candidatura_eventos_existente(guild_eventos_id)
+            if not atualizado:
+                print("AVISO: canal de candidatura do servidor de Eventos não foi encontrado; nada foi criado.")
     except Exception as erro:
         print(f"Erro ao atualizar candidatura no servidor de Eventos: {erro}")
 
