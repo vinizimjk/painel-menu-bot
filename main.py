@@ -55,8 +55,10 @@ GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/h4kt2Cp7fduG
 CARGO_ROBLOX_ID = 1540858217301549176
 CARGO_MINECRAFT_ID = 1534006899371147304
 CANAL_CANDIDATURA_PRINCIPAL_ID = int(os.getenv("CANAL_CANDIDATURA_PRINCIPAL_ID", "1541035337709649990") or "1541035337709649990")
-FORM_WEBHOOK_SECRET = os.getenv("FORM_WEBHOOK_SECRET", "")
-GOOGLE_FORM_CODIGO_ENTRY = os.getenv("GOOGLE_FORM_CODIGO_ENTRY", "").strip()
+FORM_WEBHOOK_SECRET = (os.getenv("FORM_WEBHOOK_SECRET") or os.getenv("EVENTOS_SECRET") or "").strip()
+EVENTOS_PREFILL_SCRIPT_URL = os.getenv("EVENTOS_PREFILL_SCRIPT_URL", "").strip()
+EVENTOS_PREFILL_CONFIG_FILE = DATA_DIR / "eventos_prefill.json"
+EVENTOS_GUILD_ID = int(os.getenv("EVENTOS_GUILD_ID", "1541541588122079283") or "1541541588122079283")
 CANDIDATURA_CODES_FILE = DATA_DIR / "candidatura_codes.json"
 _CANDIDATURA_CODES_LOCK = threading.Lock()
 
@@ -243,38 +245,59 @@ def _salvar_codigos_candidatura(dados):
 
 
 def _gerar_codigo_candidatura(user_id):
-    codigo = f"EVT-{int(user_id)}-{secrets.token_hex(3).upper()}"
+    # Compatível com o Apps Script antigo: RM-EVT + 6 caracteres hexadecimais.
+    # O vínculo com o Discord fica salvo no JSON de códigos.
     with _CANDIDATURA_CODES_LOCK:
         dados = _carregar_codigos_candidatura()
-        dados[codigo] = {"discord_id": str(int(user_id))}
-        _salvar_codigos_candidatura(dados)
-    return codigo
+        for _ in range(30):
+            codigo = f"RM-EVT-{secrets.token_hex(3).upper()}"
+            if codigo not in dados:
+                dados[codigo] = {"discord_id": str(int(user_id))}
+                _salvar_codigos_candidatura(dados)
+                return codigo
+    raise RuntimeError("Não foi possível gerar um código de candidatura único.")
 
 
 def _discord_id_por_codigo(codigo):
     if not codigo:
         return None
+    codigo = str(codigo).strip().upper()
     with _CANDIDATURA_CODES_LOCK:
-        item = _carregar_codigos_candidatura().get(str(codigo).strip())
+        item = _carregar_codigos_candidatura().get(codigo)
     if isinstance(item, dict) and str(item.get("discord_id", "")).isdigit():
         return int(item["discord_id"])
     return None
 
 
+def _carregar_prefill_script_url():
+    if EVENTOS_PREFILL_SCRIPT_URL:
+        return EVENTOS_PREFILL_SCRIPT_URL
+    if EVENTOS_PREFILL_CONFIG_FILE.exists():
+        try:
+            dados = json.loads(EVENTOS_PREFILL_CONFIG_FILE.read_text(encoding="utf-8"))
+            url = str(dados.get("prefill_script_url") or "").strip()
+            if url:
+                return url
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
+    return ""
+
+
+def _salvar_prefill_script_url(url):
+    url = str(url or "").strip()
+    tmp = EVENTOS_PREFILL_CONFIG_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"prefill_script_url": url}, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(EVENTOS_PREFILL_CONFIG_FILE)
+
+
 def _url_formulario_com_codigo(codigo):
-    """Monta link pré-preenchido quando o entry ID do campo está configurado."""
-    if not GOOGLE_FORM_CODIGO_ENTRY:
-        return GOOGLE_FORMS_URL
-    entry = GOOGLE_FORM_CODIGO_ENTRY
-    if entry.isdigit():
-        entry = f"entry.{entry}"
-    if not entry.startswith("entry."):
-        entry = f"entry.{entry}"
-    partes = urlsplit(GOOGLE_FORMS_URL)
-    query = dict(parse_qsl(partes.query, keep_blank_values=True))
-    query["usp"] = "pp_url"
-    query[entry] = codigo
-    return urlunsplit((partes.scheme, partes.netloc, partes.path, urlencode(query), partes.fragment))
+    # O Apps Script existente encontra o campo "Código da candidatura" no Forms
+    # e redireciona para uma URL pré-preenchida. Não precisamos de entry.xxxxx.
+    script_url = _carregar_prefill_script_url()
+    if script_url:
+        separador = "&" if "?" in script_url else "?"
+        return f"{script_url}{separador}{urlencode({'codigo': codigo})}"
+    return GOOGLE_FORMS_URL
 
 
 class CandidaturaEventosView(discord.ui.View):
@@ -327,11 +350,12 @@ class CandidaturaEventosView(discord.ui.View):
             "\n\n📌 Quando terminar, a análise e o ticket serão feitos no **servidor principal da RESENHA MÁXIMA**."
             if origem_eventos else ""
         )
+        prefill_ativo = bool(_carregar_prefill_script_url())
         aviso_codigo = (
-            "\n\n✅ O campo **Código da candidatura** já vai preenchido automaticamente."
-            if GOOGLE_FORM_CODIGO_ENTRY
+            "\n\n✅ O campo **Código da candidatura** será preenchido automaticamente."
+            if prefill_ativo
             else f"\n\n🔑 **Código da candidatura:** `{codigo}`\n"
-                 "⚠️ Configure `GOOGLE_FORM_CODIGO_ENTRY` para o bot preencher esse campo automaticamente no Forms."
+                 "⚠️ O Web App de pré-preenchimento ainda não foi registrado no site."
         )
         await interaction.response.send_message(
             f"📝 **Formulário de candidatura para Aprendiz de Eventos**\n\n{link}{aviso_codigo}{complemento}",
@@ -487,6 +511,12 @@ def _normalizar_respostas_formulario(payload):
 
 
 def _discord_id_do_payload(payload):
+    codigo_direto = payload.get("codigo") or payload.get("codigo_candidatura")
+    if codigo_direto:
+        encontrado = _discord_id_por_codigo(codigo_direto)
+        if encontrado:
+            return encontrado
+
     respostas = _normalizar_respostas_formulario(payload)
     for pergunta, valor in respostas.items():
         titulo = pergunta.casefold().strip()
@@ -1180,6 +1210,17 @@ async def on_ready():
     except Exception as erro:
         print(f"Erro ao publicar menu de candidatura no servidor principal: {erro}")
 
+    # Atualiza também o canal JÁ EXISTENTE do Departamento de Eventos.
+    # Esta rotina não duplica a estrutura: configurar_servidor_eventos cria,
+    # no máximo, o canal de candidatura se ele realmente não existir.
+    try:
+        cfg_eventos = carregar_servidores_config()
+        guild_eventos_id = int(cfg_eventos.get("eventos_guild_id") or EVENTOS_GUILD_ID or 0)
+        if guild_eventos_id and bot.get_guild(guild_eventos_id):
+            await configurar_servidor_eventos(guild_eventos_id)
+    except Exception as erro:
+        print(f"Erro ao atualizar candidatura no servidor de Eventos: {erro}")
+
     if getattr(bot, "_menu_sync_feito", False):
         print(f"Bot conectado como {bot.user}")
         return
@@ -1217,24 +1258,25 @@ def iniciar_bot():
 app = Flask(__name__)
 app.secret_key = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
 
-@app.route("/api/candidatura-eventos", methods=["POST"])
-def webhook_candidatura_eventos():
-    """Recebe uma resposta do Google Forms/Apps Script e cria o ticket no Discord."""
-    if FORM_WEBHOOK_SECRET:
-        recebido = (
-            request.headers.get("X-Webhook-Secret")
-            or request.args.get("secret")
-            or ""
-        )
-        if not secrets.compare_digest(str(recebido), str(FORM_WEBHOOK_SECRET)):
-            return {"ok": False, "erro": "Webhook não autorizado."}, 401
+def _segredo_webhook_valido(payload):
+    if not FORM_WEBHOOK_SECRET:
+        return True
+    recebido = (
+        request.headers.get("X-Webhook-Secret")
+        or request.args.get("secret")
+        or (payload.get("secret") if isinstance(payload, dict) else "")
+        or ""
+    )
+    return secrets.compare_digest(str(recebido), str(FORM_WEBHOOK_SECRET))
 
-    payload = request.get_json(silent=True)
+
+def _processar_webhook_candidatura(payload):
     if not isinstance(payload, dict):
         return {"ok": False, "erro": "Envie os dados do formulário em JSON."}, 400
+    if not _segredo_webhook_valido(payload):
+        return {"ok": False, "erro": "Webhook não autorizado."}, 401
     if not TOKEN or not bot.is_ready() or BOT_LOOP is None:
         return {"ok": False, "erro": "O bot ainda não está conectado ao Discord."}, 503
-
     try:
         futuro = asyncio.run_coroutine_threadsafe(
             criar_ticket_candidatura_eventos(payload),
@@ -1249,6 +1291,37 @@ def webhook_candidatura_eventos():
     except Exception as erro:
         print(f"Erro no webhook de candidatura: {repr(erro)}")
         return {"ok": False, "erro": str(erro)}, 400
+
+
+@app.route("/api/recrutamento/eventos/prova", methods=["POST"])
+def webhook_recrutamento_eventos_prova():
+    """Compatibilidade com o Apps Script antigo da candidatura de Eventos."""
+    payload = request.get_json(silent=True)
+    return _processar_webhook_candidatura(payload)
+
+
+@app.route("/api/recrutamento/eventos/configurar-prefill", methods=["POST"])
+def configurar_prefill_eventos():
+    """Registra o Web App do Apps Script usado para abrir o Forms pré-preenchido."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return {"ok": False, "erro": "Envie JSON."}, 400
+    if not _segredo_webhook_valido(payload):
+        return {"ok": False, "erro": "Webhook não autorizado."}, 401
+    url = str(payload.get("prefill_script_url") or "").strip()
+    if not url.startswith("https://script.google.com/") or "/exec" not in url:
+        return {"ok": False, "erro": "URL do Web App inválida."}, 400
+    try:
+        _salvar_prefill_script_url(url)
+    except OSError as erro:
+        return {"ok": False, "erro": f"Não foi possível salvar a configuração: {erro}"}, 500
+    return {"ok": True, "prefill_script_url": url}, 200
+
+
+@app.route("/api/candidatura-eventos", methods=["POST"])
+def webhook_candidatura_eventos():
+    """Rota nova; mantém compatibilidade com integrações já existentes."""
+    return _processar_webhook_candidatura(request.get_json(silent=True))
 
 USERS_FILE = DATA_DIR / "panel_users.json"
 ADMIN_LOG_FILE = DATA_DIR / "admin_logs.json"
