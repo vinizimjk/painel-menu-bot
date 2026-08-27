@@ -6,6 +6,7 @@ import secrets
 from copy import deepcopy
 from pathlib import Path
 from functools import wraps
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
 import discord
 from discord.ext import commands
@@ -55,6 +56,9 @@ CARGO_ROBLOX_ID = 1540858217301549176
 CARGO_MINECRAFT_ID = 1534006899371147304
 CANAL_CANDIDATURA_PRINCIPAL_ID = int(os.getenv("CANAL_CANDIDATURA_PRINCIPAL_ID", "1541035337709649990") or "1541035337709649990")
 FORM_WEBHOOK_SECRET = os.getenv("FORM_WEBHOOK_SECRET", "")
+GOOGLE_FORM_CODIGO_ENTRY = os.getenv("GOOGLE_FORM_CODIGO_ENTRY", "").strip()
+CANDIDATURA_CODES_FILE = DATA_DIR / "candidatura_codes.json"
+_CANDIDATURA_CODES_LOCK = threading.Lock()
 
 CARGOS_EVENTOS = [
     ("Chef de Departamento", "chef"),
@@ -222,6 +226,57 @@ async def _obter_canal_voz(categoria, nome):
         reason="Configuração automática do Departamento de Eventos"
     )
 
+def _carregar_codigos_candidatura():
+    if not CANDIDATURA_CODES_FILE.exists():
+        return {}
+    try:
+        dados = json.loads(CANDIDATURA_CODES_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return dados if isinstance(dados, dict) else {}
+
+
+def _salvar_codigos_candidatura(dados):
+    tmp = CANDIDATURA_CODES_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(CANDIDATURA_CODES_FILE)
+
+
+def _gerar_codigo_candidatura(user_id):
+    codigo = f"EVT-{int(user_id)}-{secrets.token_hex(3).upper()}"
+    with _CANDIDATURA_CODES_LOCK:
+        dados = _carregar_codigos_candidatura()
+        dados[codigo] = {"discord_id": str(int(user_id))}
+        _salvar_codigos_candidatura(dados)
+    return codigo
+
+
+def _discord_id_por_codigo(codigo):
+    if not codigo:
+        return None
+    with _CANDIDATURA_CODES_LOCK:
+        item = _carregar_codigos_candidatura().get(str(codigo).strip())
+    if isinstance(item, dict) and str(item.get("discord_id", "")).isdigit():
+        return int(item["discord_id"])
+    return None
+
+
+def _url_formulario_com_codigo(codigo):
+    """Monta link pré-preenchido quando o entry ID do campo está configurado."""
+    if not GOOGLE_FORM_CODIGO_ENTRY:
+        return GOOGLE_FORMS_URL
+    entry = GOOGLE_FORM_CODIGO_ENTRY
+    if entry.isdigit():
+        entry = f"entry.{entry}"
+    if not entry.startswith("entry."):
+        entry = f"entry.{entry}"
+    partes = urlsplit(GOOGLE_FORMS_URL)
+    query = dict(parse_qsl(partes.query, keep_blank_values=True))
+    query["usp"] = "pp_url"
+    query[entry] = codigo
+    return urlunsplit((partes.scheme, partes.netloc, partes.path, urlencode(query), partes.fragment))
+
+
 class CandidaturaEventosView(discord.ui.View):
     """Menu simples e persistente usado nos dois servidores."""
 
@@ -266,12 +321,20 @@ class CandidaturaEventosView(discord.ui.View):
         if interaction.guild:
             origem_eventos = str(interaction.guild.id) == str(cfg.get("eventos_guild_id") or "")
 
+        codigo = _gerar_codigo_candidatura(interaction.user.id)
+        link = _url_formulario_com_codigo(codigo)
         complemento = (
             "\n\n📌 Quando terminar, a análise e o ticket serão feitos no **servidor principal da RESENHA MÁXIMA**."
             if origem_eventos else ""
         )
+        aviso_codigo = (
+            "\n\n✅ O campo **Código da candidatura** já vai preenchido automaticamente."
+            if GOOGLE_FORM_CODIGO_ENTRY
+            else f"\n\n🔑 **Código da candidatura:** `{codigo}`\n"
+                 "⚠️ Configure `GOOGLE_FORM_CODIGO_ENTRY` para o bot preencher esse campo automaticamente no Forms."
+        )
         await interaction.response.send_message(
-            f"📝 **Formulário de candidatura para Aprendiz de Eventos**\n\n{GOOGLE_FORMS_URL}{complemento}",
+            f"📝 **Formulário de candidatura para Aprendiz de Eventos**\n\n{link}{aviso_codigo}{complemento}",
             ephemeral=True,
         )
 
@@ -294,15 +357,29 @@ async def _publicar_ou_atualizar_menu(canal):
     ultima = None
     try:
         async for msg in canal.history(limit=50):
-            if msg.author.id == bot.user.id and msg.components:
+            if msg.author.id != bot.user.id:
+                continue
+
+            ids = set()
+            if msg.components:
                 ids = {
                     getattr(comp, "custom_id", None)
                     for row in msg.components
                     for comp in getattr(row, "children", [])
                 }
-                if "eventos_candidatura_informacoes" in ids or "eventos_candidatura_fazer" in ids:
-                    ultima = msg
-                    break
+            if "eventos_candidatura_informacoes" in ids or "eventos_candidatura_fazer" in ids:
+                ultima = msg
+                break
+
+            # Aproveita a mensagem antiga da candidatura (ex.: menu Roblox/Minecraft)
+            # em vez de mandar uma segunda mensagem e deixar o menu antigo no canal.
+            texto_embed = " ".join(
+                f"{getattr(embed, 'title', '')} {getattr(embed, 'description', '')}"
+                for embed in msg.embeds
+            ).casefold()
+            if "candidatura" in texto_embed and (msg.components or msg.embeds):
+                ultima = msg
+                break
     except (discord.Forbidden, discord.HTTPException):
         ultima = None
 
@@ -410,6 +487,14 @@ def _normalizar_respostas_formulario(payload):
 
 
 def _discord_id_do_payload(payload):
+    respostas = _normalizar_respostas_formulario(payload)
+    for pergunta, valor in respostas.items():
+        titulo = pergunta.casefold().strip()
+        if "código da candidatura" in titulo or "codigo da candidatura" in titulo:
+            encontrado = _discord_id_por_codigo(valor)
+            if encontrado:
+                return encontrado
+
     chaves = ("discord_id", "discordId", "id_discord", "usuario_discord_id", "user_id")
     for chave in chaves:
         valor = payload.get(chave)
@@ -418,7 +503,6 @@ def _discord_id_do_payload(payload):
                 return int(str(valor).strip().replace("<@", "").replace("!", "").replace(">", ""))
             except ValueError:
                 pass
-    respostas = _normalizar_respostas_formulario(payload)
     for pergunta, valor in respostas.items():
         if "discord" in pergunta.casefold() and "id" in pergunta.casefold():
             try:
