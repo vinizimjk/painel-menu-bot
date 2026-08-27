@@ -50,7 +50,7 @@ MAX_BOTOES = 25
 SERVIDORES_CONFIG_FILE = DATA_DIR / "servidores_config.json"
 CONTA_TESTE_EVENTOS_ID = 1532838576256057557
 CARGO_TESTE_EVENTOS_ID = 1536081355711062166
-GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/gpvZhRAWc41CUurJ8")
+GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/h4kt2Cp7fduGG4Pc8")
 CARGO_ROBLOX_ID = 1540858217301549176
 CARGO_MINECRAFT_ID = 1534006899371147304
 
@@ -1051,7 +1051,7 @@ MODELOS_MENSAGENS = [
         "categoria": "Eventos",
         "titulo": "Candidatura — link da prova",
         "destino": "Canal de candidatura",
-        "conteudo": "📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂\n\nFaça a prova para tentar entrar como Aprendiz de Eventos.\n\n🎓 Fazer prova: https://forms.gle/gpvZhRAWc41CUurJ8",
+        "conteudo": "📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂\n\nFaça a prova para tentar entrar como Aprendiz de Eventos.\n\n🎓 Fazer prova: https://forms.gle/h4kt2Cp7fduGG4Pc8",
     },
     {
         "categoria": "Eventos",
