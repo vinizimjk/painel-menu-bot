@@ -50,7 +50,9 @@ MAX_BOTOES = 25
 SERVIDORES_CONFIG_FILE = DATA_DIR / "servidores_config.json"
 CONTA_TESTE_EVENTOS_ID = 1532838576256057557
 CARGO_TESTE_EVENTOS_ID = 1536081355711062166
-GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/h4kt2Cp7fduGG4Pc8")
+GOOGLE_FORMS_URL = "https://forms.gle/h4kt2Cp7fduGG4Pc8"
+EVENTOS_GUILD_ID = 1541541588122079283
+CANAL_CANDIDATURA_PRINCIPAL_ID = 1541035337709649990
 CARGO_ROBLOX_ID = 1540858217301549176
 CARGO_MINECRAFT_ID = 1534006899371147304
 
@@ -561,6 +563,41 @@ async def configurar_servidor_eventos(guild_id):
     dados["configurado_em"] = __import__("datetime").datetime.now().isoformat()
     salvar_servidores_config(dados)
 
+    # Atualiza também o canal de candidatura do servidor principal para apontar
+    # diretamente para este canal do servidor de Eventos.
+    try:
+        if candidatura is not None:
+            canal_principal = bot.get_channel(CANAL_CANDIDATURA_PRINCIPAL_ID)
+            if canal_principal is None:
+                canal_principal = await bot.fetch_channel(CANAL_CANDIDATURA_PRINCIPAL_ID)
+            destino = f"https://discord.com/channels/{guild.id}/{candidatura.id}"
+            embed_principal = discord.Embed(
+                title="📝 Candidatura de Eventos",
+                description=(
+                    "As candidaturas do **Departamento de Eventos** agora são feitas no servidor de Eventos.\n\n"
+                    "Clique no botão abaixo para ir ao canal oficial de candidatura."
+                ),
+                color=discord.Color.blurple(),
+            )
+            view_principal = discord.ui.View(timeout=None)
+            view_principal.add_item(discord.ui.Button(
+                label="Ir para Candidatura",
+                emoji="📜",
+                style=discord.ButtonStyle.link,
+                url=destino,
+            ))
+            mensagem_existente = None
+            async for msg in canal_principal.history(limit=50):
+                if msg.author.id == bot.user.id and msg.embeds and msg.embeds[0].title == "📝 Candidatura de Eventos":
+                    mensagem_existente = msg
+                    break
+            if mensagem_existente:
+                await mensagem_existente.edit(content=None, embed=embed_principal, view=view_principal)
+            else:
+                await canal_principal.send(embed=embed_principal, view=view_principal)
+    except Exception as erro:
+        print(f"Erro ao redirecionar candidatura no servidor principal: {erro}")
+
     return {
         "guild_id": str(guild.id),
         "guild_name": guild.name,
@@ -995,6 +1032,16 @@ async def on_ready():
     BOT_LOOP = asyncio.get_running_loop()
 
     registrar_views_persistentes()
+
+    # Garante em TODO deploy/reinício que o servidor de Eventos esteja configurado,
+    # que o canal 📜・𝑪𝒂𝒏𝒅𝒊𝒅𝒂𝒕𝒖𝒓𝒂 exista e que o canal principal esteja redirecionado.
+    if not getattr(bot, "_eventos_auto_config_feito", False):
+        try:
+            await configurar_servidor_eventos(EVENTOS_GUILD_ID)
+            bot._eventos_auto_config_feito = True
+            print(f"Servidor de Eventos {EVENTOS_GUILD_ID} configurado automaticamente.")
+        except Exception as erro:
+            print(f"Erro na configuração automática do servidor de Eventos: {erro}")
 
     if getattr(bot, "_menu_sync_feito", False):
         print(f"Bot conectado como {bot.user}")
