@@ -2,6 +2,7 @@ import asyncio
 import os
 import json
 import threading
+import hashlib
 import secrets
 import unicodedata
 import urllib.parse
@@ -59,6 +60,12 @@ CARGO_TESTE_EVENTOS_ID = 1536081355711062166
 GOOGLE_FORMS_URL = os.getenv("GOOGLE_FORMS_URL", "https://forms.gle/h4kt2Cp7fduGG4Pc8")
 CARGO_ROBLOX_ID = 1540858217301549176
 CARGO_MINECRAFT_ID = 1534006899371147304
+
+# Cargos que aparecem dentro do Roblox.
+# Os IDs podem ser configurados no Railway. Se ficarem vazios,
+# o bot também reconhece os nomes dos cargos como fallback.
+DISCORD_ROLE_ADM_G_ID = int(os.getenv("DISCORD_ROLE_ADM_G_ID", "0") or "0")
+DISCORD_ROLE_CF_DPT_ID = int(os.getenv("DISCORD_ROLE_CF_DPT_ID", "0") or "0")
 CANAL_CANDIDATURA_PRINCIPAL_ID = int(os.getenv("CANAL_CANDIDATURA_PRINCIPAL_ID", "1541035337709649990") or "1541035337709649990")
 FORM_WEBHOOK_SECRET = (os.getenv("FORM_WEBHOOK_SECRET") or os.getenv("EVENTOS_SECRET") or "").strip()
 EVENTOS_PREFILL_SCRIPT_URL = os.getenv("EVENTOS_PREFILL_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbxkCj_GHByDB1fGiWIB5afuKSseh3akjYb2cwrFNubeaBpeL5mf2LnltEpx8zroIvn7MQ/exec").strip()
@@ -1029,6 +1036,7 @@ GUILD_ID = os.getenv("GUILD_ID")
 BOT_LOOP = None
 
 intents = discord.Intents.default()
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
@@ -1299,6 +1307,10 @@ async def on_ready():
     except Exception as erro:
         print(f"Erro ao atualizar candidatura no servidor de Eventos: {erro}")
 
+    if not getattr(bot, "_scan_roblox_feito", False):
+        bot._scan_roblox_feito = True
+        asyncio.create_task(_varrer_membros_roblox_pendentes())
+
     if getattr(bot, "_menu_sync_feito", False):
         print(f"Bot conectado como {bot.user}")
         return
@@ -1318,6 +1330,117 @@ async def on_ready():
         print(f"Erro ao sincronizar comandos: {erro}")
 
     print(f"Bot conectado como {bot.user}")
+
+
+# =========================================================
+# ROBLOX — DM AUTOMÁTICA AO RECEBER O CARGO
+# =========================================================
+
+async def _enviar_dm_cadastro_roblox_site(membro: discord.Member):
+    if membro.bot:
+        return
+
+    # IMPORTANTE: o link precisa ser criado PELO SITE que vai abrir a URL.
+    # Assim o token fica salvo exatamente no serviço que recebe /roblox/iniciar/...
+    def criar_link_no_site():
+        payload = {
+            "discord_id": str(membro.id),
+            "discord_nome": str(membro)[:150],
+            "guild_id": str(membro.guild.id),
+        }
+
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Resenha-Maxima-Bot/1.0",
+        }
+        if ROBLOX_VINCULO_SECRET:
+            headers["X-Roblox-Link-Secret"] = ROBLOX_VINCULO_SECRET
+            payload["secret"] = ROBLOX_VINCULO_SECRET
+
+        requisicao = urllib.request.Request(
+            SITE_PUBLIC_URL + "/api/roblox/criar-vinculo",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(requisicao, timeout=15) as resposta:
+                return json.loads(resposta.read().decode("utf-8") or "{}")
+        except urllib.error.HTTPError as erro:
+            try:
+                dados_erro = json.loads(erro.read().decode("utf-8") or "{}")
+                mensagem = dados_erro.get("erro") or f"HTTP {erro.code}"
+            except Exception:
+                mensagem = f"HTTP {erro.code}"
+            return {"ok": False, "erro": mensagem}
+        except Exception as erro:
+            return {"ok": False, "erro": str(erro)}
+
+    resposta = await asyncio.to_thread(criar_link_no_site)
+    if not resposta.get("ok"):
+        print(
+            f"❌ Roblox: não consegui criar o link para {membro} "
+            f"({membro.id}): {resposta.get('erro', 'erro desconhecido')}"
+        )
+        return
+
+    url = str(resposta.get("url") or "").strip()
+    if not url:
+        print(f"❌ Roblox: o site não devolveu a URL para {membro} ({membro.id}).")
+        return
+
+    embed = discord.Embed(
+        title="🎮 Cadastro do Roblox — Resenha Máxima",
+        description=(
+            "Você recebeu o cargo de **Roblox**.\n\n"
+            "Clique no botão abaixo e entre pela página oficial do Roblox "
+            "para confirmar qual conta é sua.\n\n"
+            "O link expira em 15 minutos."
+        ),
+        color=discord.Color.blurple(),
+    )
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        label="Entrar com Roblox",
+        style=discord.ButtonStyle.link,
+        emoji="🎮",
+        url=url,
+    ))
+
+    try:
+        await membro.send(embed=embed, view=view)
+        print(f"📩 DM Roblox enviada: {membro} ({membro.id})")
+    except discord.Forbidden:
+        print(f"⚠️ DM fechada para Roblox: {membro} ({membro.id})")
+    except discord.HTTPException as erro:
+        print(f"❌ Erro ao mandar DM Roblox para {membro}: {erro}")
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    if after.bot:
+        return
+    tinha_roblox = any(c.id == CARGO_ROBLOX_ID for c in before.roles)
+    tem_roblox = any(c.id == CARGO_ROBLOX_ID for c in after.roles)
+    if not tinha_roblox and tem_roblox:
+        await _enviar_dm_cadastro_roblox_site(after)
+
+
+async def _varrer_membros_roblox_pendentes():
+    # Corrige também quem já recebeu o cargo antes do deploy/reinício.
+    for guild in bot.guilds:
+        cargo = guild.get_role(CARGO_ROBLOX_ID)
+        if not cargo:
+            continue
+        for membro in cargo.members:
+            if membro.bot:
+                continue
+            dados = carregar_roblox_vinculos()
+            if str(membro.id) not in dados.get("vinculos", {}):
+                await _enviar_dm_cadastro_roblox_site(membro)
+                await asyncio.sleep(1)
 
 
 def iniciar_bot():
@@ -1354,6 +1477,13 @@ ROBLOX_VINCULO_SECRET = os.getenv(
     "ROBLOX_VINCULO_SECRET",
     "",
 ).strip()
+
+# Se a variável não existir, bot e site derivam a mesma chave do TOKEN.
+# Assim o cadastro Roblox funciona sem exigir uma variável extra no Railway.
+if not ROBLOX_VINCULO_SECRET and TOKEN:
+    ROBLOX_VINCULO_SECRET = hashlib.sha256(
+        ("resenha-maxima:roblox-vinculo:" + TOKEN).encode("utf-8")
+    ).hexdigest()
 ROBLOX_CLIENT_ID = os.getenv(
     "ROBLOX_CLIENT_ID",
     "",
@@ -2887,6 +3017,117 @@ def remover_futura_atualizacao():
     return redirect(url_for("painel", aba="atualizacoes"))
 
 # =========================================================
+# ROBLOX — CARGOS DO DISCORD PARA O JOGO
+# =========================================================
+
+def _normalizar_nome_cargo(nome):
+    texto = unicodedata.normalize("NFKD", str(nome or ""))
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    texto = texto.casefold().strip()
+    for caractere in "[](){}._-/\\|•・":
+        texto = texto.replace(caractere, " ")
+    return " ".join(texto.split())
+
+
+def _cargo_corresponde(role, role_id_configurado, nomes):
+    if role_id_configurado and role.id == role_id_configurado:
+        return True
+
+    nome = _normalizar_nome_cargo(role.name)
+    return nome in nomes
+
+
+async def _buscar_cargos_jogo_discord(discord_id):
+    try:
+        discord_id_int = int(discord_id)
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "main_role": None,
+            "second_role": None,
+            "erro": "Discord ID inválido.",
+        }
+
+    nomes_adm = {
+        "adm g",
+        "adm geral",
+        "administrador geral",
+        "administracao geral",
+    }
+    nomes_cf_dpt = {
+        "cf dpt",
+        "chefe de departamento",
+        "chefe de departamentos",
+        "chef de departamento",
+        "chef de departamentos",
+    }
+
+    tem_adm = False
+    tem_cf_dpt = False
+    encontrado = False
+
+    for guild in bot.guilds:
+        membro = guild.get_member(discord_id_int)
+        if membro is None:
+            try:
+                membro = await guild.fetch_member(discord_id_int)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                membro = None
+
+        if membro is None:
+            continue
+
+        encontrado = True
+        for role in membro.roles:
+            if _cargo_corresponde(
+                role,
+                DISCORD_ROLE_ADM_G_ID,
+                nomes_adm,
+            ):
+                tem_adm = True
+
+            if _cargo_corresponde(
+                role,
+                DISCORD_ROLE_CF_DPT_ID,
+                nomes_cf_dpt,
+            ):
+                tem_cf_dpt = True
+
+    return {
+        "ok": True,
+        "discord_encontrado": encontrado,
+        "main_role": "ADM_G" if tem_adm else None,
+        "second_role": "CF_DPT" if tem_cf_dpt else None,
+        "erro": None,
+    }
+
+
+def _buscar_cargos_jogo_discord_sync(discord_id):
+    if not bot.is_ready() or BOT_LOOP is None:
+        return {
+            "ok": False,
+            "main_role": None,
+            "second_role": None,
+            "erro": "Bot ainda não conectado ao Discord.",
+        }
+
+    try:
+        futuro = asyncio.run_coroutine_threadsafe(
+            _buscar_cargos_jogo_discord(discord_id),
+            BOT_LOOP,
+        )
+        return futuro.result(timeout=12)
+    except Exception as erro:
+        print(f"Erro ao consultar cargos para o Roblox: {repr(erro)}")
+        return {
+            "ok": False,
+            "main_role": None,
+            "second_role": None,
+            "erro": "Falha ao consultar os cargos no Discord.",
+        }
+
+
+# =========================================================
 # ROBLOX — API INTERNA + OAUTH
 # =========================================================
 
@@ -3315,6 +3556,51 @@ def api_roblox_desvincular():
         "ok": True,
         "removido": removido,
     })
+
+@app.route("/api/roblox/game-profile/<roblox_id>")
+def api_roblox_game_profile(roblox_id):
+    roblox_id = str(roblox_id or "").strip()
+    if not roblox_id.isdigit():
+        return jsonify({
+            "ok": False,
+            "erro": "Roblox User ID inválido.",
+        }), 400
+
+    dados = carregar_roblox_vinculos()
+    discord_id = None
+    vinculo_encontrado = None
+
+    for candidato_discord_id, vinculo in dados["vinculos"].items():
+        if str(vinculo.get("roblox_id") or "") == roblox_id:
+            discord_id = str(candidato_discord_id)
+            vinculo_encontrado = vinculo
+            break
+
+    if not discord_id:
+        return jsonify({
+            "ok": True,
+            "linked": False,
+            "main_role": None,
+            "second_role": None,
+        })
+
+    cargos = _buscar_cargos_jogo_discord_sync(discord_id)
+    if not cargos.get("ok"):
+        return jsonify({
+            "ok": False,
+            "linked": True,
+            "erro": cargos.get("erro") or "Não consegui consultar os cargos.",
+        }), 503
+
+    return jsonify({
+        "ok": True,
+        "linked": True,
+        "roblox_id": roblox_id,
+        "roblox_username": str((vinculo_encontrado or {}).get("username") or ""),
+        "main_role": cargos.get("main_role"),
+        "second_role": cargos.get("second_role"),
+    })
+
 
 @app.route("/status")
 def status():
