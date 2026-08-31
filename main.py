@@ -3020,111 +3020,78 @@ def remover_futura_atualizacao():
 # ROBLOX — CARGOS DO DISCORD PARA O JOGO
 # =========================================================
 
-def _normalizar_nome_cargo(nome):
-    texto = unicodedata.normalize("NFKD", str(nome or ""))
-    texto = "".join(c for c in texto if not unicodedata.combining(c))
-    texto = texto.casefold().strip()
-    for caractere in "[](){}._-/\\|•・":
-        texto = texto.replace(caractere, " ")
-    return " ".join(texto.split())
+# IDs fixos dos dois servidores.
+GUILD_PRINCIPAL_JOGO_ID = 1532613054703997012
+GUILD_EVENTOS_JOGO_ID = 1541541588122079283
+
+# A ordem define a prioridade: o primeiro cargo que o membro tiver aparece no jogo.
+CARGOS_PRINCIPAL_JOGO = [
+    (1532613934883016704, "ADM_G"),
+    (1540876101763600424, "CF_DPT"),
+    (1533624911912767629, "ADM_DC"),
+    (1540987356520251482, "MOD_DC"),
+    (1532614113346453724, "MEM"),
+]
+
+CARGOS_EVENTOS_JOGO = [
+    (1541624067256352868, "CF_DPT_EVT"),
+    (1541624066396651580, "DIR_EVT"),
+    (1541624065054482472, "GER_EVT"),
+    (1541624064081268878, "COO_EVT"),
+    (1541624062910922843, "SUP_EVT"),
+    (1541624062298685530, "AP_EVT"),
+]
+
+async def _buscar_membro_jogo(guild_id, discord_id):
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        return None
+    membro = guild.get_member(discord_id)
+    if membro is not None:
+        return membro
+    try:
+        return await guild.fetch_member(discord_id)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return None
 
 
-def _cargo_corresponde(role, role_id_configurado, nomes):
-    if role_id_configurado and role.id == role_id_configurado:
-        return True
-
-    nome = _normalizar_nome_cargo(role.name)
-    return nome in nomes
+def _cargo_prioritario(membro, configuracao):
+    if membro is None:
+        return None
+    ids = {role.id for role in membro.roles}
+    for role_id, codigo in configuracao:
+        if role_id in ids:
+            return codigo
+    return None
 
 
 async def _buscar_cargos_jogo_discord(discord_id):
     try:
         discord_id_int = int(discord_id)
     except (TypeError, ValueError):
-        return {
-            "ok": False,
-            "main_role": None,
-            "second_role": None,
-            "erro": "Discord ID inválido.",
-        }
+        return {"ok": False, "main_role": None, "second_role": None, "erro": "Discord ID inválido."}
 
-    nomes_adm = {
-        "adm g",
-        "adm geral",
-        "administrador geral",
-        "administracao geral",
-    }
-    nomes_cf_dpt = {
-        "cf dpt",
-        "chefe de departamento",
-        "chefe de departamentos",
-        "chef de departamento",
-        "chef de departamentos",
-    }
-
-    tem_adm = False
-    tem_cf_dpt = False
-    encontrado = False
-
-    for guild in bot.guilds:
-        membro = guild.get_member(discord_id_int)
-        if membro is None:
-            try:
-                membro = await guild.fetch_member(discord_id_int)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                membro = None
-
-        if membro is None:
-            continue
-
-        encontrado = True
-        for role in membro.roles:
-            if _cargo_corresponde(
-                role,
-                DISCORD_ROLE_ADM_G_ID,
-                nomes_adm,
-            ):
-                tem_adm = True
-
-            if _cargo_corresponde(
-                role,
-                DISCORD_ROLE_CF_DPT_ID,
-                nomes_cf_dpt,
-            ):
-                tem_cf_dpt = True
+    principal = await _buscar_membro_jogo(GUILD_PRINCIPAL_JOGO_ID, discord_id_int)
+    eventos = await _buscar_membro_jogo(GUILD_EVENTOS_JOGO_ID, discord_id_int)
 
     return {
         "ok": True,
-        "discord_encontrado": encontrado,
-        "main_role": "ADM_G" if tem_adm else None,
-        "second_role": "CF_DPT" if tem_cf_dpt else None,
+        "discord_encontrado": principal is not None or eventos is not None,
+        "main_role": _cargo_prioritario(principal, CARGOS_PRINCIPAL_JOGO),
+        "second_role": _cargo_prioritario(eventos, CARGOS_EVENTOS_JOGO),
         "erro": None,
     }
 
 
 def _buscar_cargos_jogo_discord_sync(discord_id):
     if not bot.is_ready() or BOT_LOOP is None:
-        return {
-            "ok": False,
-            "main_role": None,
-            "second_role": None,
-            "erro": "Bot ainda não conectado ao Discord.",
-        }
-
+        return {"ok": False, "main_role": None, "second_role": None, "erro": "Bot ainda não conectado ao Discord."}
     try:
-        futuro = asyncio.run_coroutine_threadsafe(
-            _buscar_cargos_jogo_discord(discord_id),
-            BOT_LOOP,
-        )
+        futuro = asyncio.run_coroutine_threadsafe(_buscar_cargos_jogo_discord(discord_id), BOT_LOOP)
         return futuro.result(timeout=12)
     except Exception as erro:
         print(f"Erro ao consultar cargos para o Roblox: {repr(erro)}")
-        return {
-            "ok": False,
-            "main_role": None,
-            "second_role": None,
-            "erro": "Falha ao consultar os cargos no Discord.",
-        }
+        return {"ok": False, "main_role": None, "second_role": None, "erro": "Falha ao consultar os cargos no Discord."}
 
 
 # =========================================================
