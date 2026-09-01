@@ -3490,6 +3490,14 @@ def _roblox_game_discord_profile_sync(discord_id):
 def api_roblox_game_profile(roblox_id):
     roblox_id = str(roblox_id or "").strip()
 
+    print(
+        "[ROBLOX GAME ROUTE] chamada recebida"
+        f" | roblox_id={roblox_id}"
+        f" | bot_ready={bot.is_ready()}"
+        f" | main_guild_id={ROBLOX_GAME_MAIN_GUILD_ID}",
+        flush=True,
+    )
+
     if not roblox_id.isdigit():
         return jsonify({
             "ok": False,
@@ -3508,6 +3516,11 @@ def api_roblox_game_profile(roblox_id):
             break
 
     if not vinculo or not discord_id:
+        print(
+            "[ROBLOX GAME ROUTE] Roblox sem vínculo encontrado"
+            f" | roblox_id={roblox_id}",
+            flush=True,
+        )
         return jsonify({
             "ok": True,
             "linked": False,
@@ -3516,6 +3529,13 @@ def api_roblox_game_profile(roblox_id):
             "main_role": None,
             "second_role": None,
         })
+
+    print(
+        "[ROBLOX GAME ROUTE] vínculo encontrado"
+        f" | roblox_id={roblox_id}"
+        f" | discord_id={discord_id}",
+        flush=True,
+    )
 
     try:
         discord_profile = _roblox_game_discord_profile_sync(discord_id)
@@ -3528,6 +3548,16 @@ def api_roblox_game_profile(roblox_id):
             "ok": False,
             "erro": "Não consegui confirmar o membro no Discord agora.",
         }), 503
+
+    print(
+        "[ROBLOX GAME ROUTE] resultado final"
+        f" | discord_id={discord_id}"
+        f" | in_main_server={bool(discord_profile['in_main_server'])}"
+        f" | in_event_server={bool(discord_profile['in_event_server'])}"
+        f" | main_role={discord_profile['main_role']}"
+        f" | second_role={discord_profile['second_role']}",
+        flush=True,
+    )
 
     return jsonify({
         "ok": True,
