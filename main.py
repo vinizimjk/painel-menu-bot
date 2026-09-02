@@ -5264,13 +5264,64 @@ def status():
     }, 200
 
 
-if __name__ == "__main__":
-    thread_bot = threading.Thread(
-        target=iniciar_bot,
-        daemon=True
-    )
-    thread_bot.start()
+# =========================================================
+# INICIALIZAÇÃO DO BOT + SITE
+# =========================================================
+#
+# IMPORTANTE:
+# No Railway o arquivo pode ser iniciado por um servidor WSGI
+# (por exemplo, importando "app") em vez de executar este arquivo
+# diretamente. Nesse caso, o bloco __main__ não roda.
+#
+# Antes o bot do Discord era iniciado SOMENTE dentro de __main__.
+# Isso podia deixar o site online, mas o bot offline, fazendo a
+# rota /api/roblox/game-profile responder:
+# discord_bot_not_ready
+#
+# Agora o bot é iniciado também quando este módulo é importado.
+# A trava abaixo impede duas inicializações dentro do mesmo processo.
+# =========================================================
 
+_bot_thread_lock = threading.Lock()
+_bot_thread_started = False
+_bot_thread = None
+
+
+def garantir_bot_iniciado():
+    global _bot_thread_started, _bot_thread
+
+    with _bot_thread_lock:
+        if _bot_thread_started:
+            return _bot_thread
+
+        if not TOKEN:
+            print(
+                "AVISO: TOKEN não configurado. "
+                "O site abrirá, mas o bot não ficará online."
+            )
+            return None
+
+        _bot_thread_started = True
+
+        _bot_thread = threading.Thread(
+            target=iniciar_bot,
+            name="ResenhaMaximaDiscordBot",
+            daemon=True,
+        )
+
+        _bot_thread.start()
+
+        print("🤖 Thread do bot Discord iniciada.")
+
+        return _bot_thread
+
+
+# Inicia o bot mesmo quando o Railway importa o Flask app
+# através de Gunicorn/WSGI.
+garantir_bot_iniciado()
+
+
+if __name__ == "__main__":
     porta = int(
         os.getenv(
             "PORT",
