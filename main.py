@@ -4,18 +4,14 @@ import json
 import threading
 import secrets
 import unicodedata
-import urllib.parse
-import urllib.request
-import urllib.error
 from copy import deepcopy
 from pathlib import Path
 from functools import wraps
-from datetime import datetime, timezone, timedelta
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
 import discord
 from discord.ext import commands
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # =========================================================
@@ -66,6 +62,40 @@ EVENTOS_PREFILL_CONFIG_FILE = DATA_DIR / "eventos_prefill.json"
 EVENTOS_GUILD_ID = int(os.getenv("EVENTOS_GUILD_ID", "1541541588122079283") or "1541541588122079283")
 CANDIDATURA_CODES_FILE = DATA_DIR / "candidatura_codes.json"
 _CANDIDATURA_CODES_LOCK = threading.Lock()
+
+
+# =========================================================
+# ROBLOX ↔ DISCORD
+# =========================================================
+MAIN_DISCORD_GUILD_ID = int(
+    os.getenv("MAIN_DISCORD_GUILD_ID", "1532613054703997012")
+    or "1532613054703997012"
+)
+ROBLOX_OWNER_USER_ID = int(
+    os.getenv("ROBLOX_OWNER_USER_ID", "8863543599")
+    or "8863543599"
+)
+ROBLOX_LINKS_FILE = DATA_DIR / os.getenv(
+    "ROBLOX_LINKS_FILENAME",
+    "roblox_links.json"
+)
+
+MAIN_ROLE_PRIORITY = [
+    (1532613934883016704, "ADM_G"),
+    (1540876101763600424, "CF_DPT"),
+    (1533624911912767629, "ADM_DC"),
+    (1540987356520251482, "MOD_DC"),
+    (1532614113346453724, "MEM"),
+]
+
+EVENT_ROLE_PRIORITY = [
+    (1541624067256352868, "CF_DPT_EVT"),
+    (1541624066396651580, "DIR_EVT"),
+    (1541624065054482472, "GER_EVT"),
+    (1541624064081268878, "COO_EVT"),
+    (1541624062910922843, "SUP_EVT"),
+    (1541624062298685530, "AP_EVT"),
+]
 
 CARGOS_EVENTOS = [
     ("Chef de Departamento", "chef"),
@@ -1329,251 +1359,6 @@ def iniciar_bot():
 
 
 
-def _agora_utc_iso():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _parse_iso_utc(valor):
-    try:
-        dt = datetime.fromisoformat(str(valor or "").replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except (TypeError, ValueError):
-        return None
-
-
-# =========================================================
-# IDENTIDADE GAMER — ROBLOX OAUTH 2.0 / OPENID CONNECT
-# =========================================================
-
-ROBLOX_VINCULOS_FILE = DATA_DIR / "roblox_vinculos.json"
-_roblox_vinculos_lock = threading.Lock()
-
-ROBLOX_VINCULO_SECRET = os.getenv(
-    "ROBLOX_VINCULO_SECRET",
-    "",
-).strip()
-ROBLOX_CLIENT_ID = os.getenv(
-    "ROBLOX_CLIENT_ID",
-    "",
-).strip()
-ROBLOX_CLIENT_SECRET = os.getenv(
-    "ROBLOX_CLIENT_SECRET",
-    "",
-).strip()
-ROBLOX_REDIRECT_URI = os.getenv(
-    "ROBLOX_REDIRECT_URI",
-    "https://resenha-maxima.up.railway.app/roblox/callback",
-).strip()
-
-ROBLOX_AUTHORIZE_URL = (
-    "https://apis.roblox.com/oauth/v1/authorize"
-)
-ROBLOX_TOKEN_URL = (
-    "https://apis.roblox.com/oauth/v1/token"
-)
-ROBLOX_USERINFO_URL = (
-    "https://apis.roblox.com/oauth/v1/userinfo"
-)
-ROBLOX_PENDENCIA_MINUTOS = 15
-
-
-def roblox_vinculos_vazio():
-    return {
-        "versao": 1,
-        "vinculos": {},
-        "pendentes": {},
-    }
-
-
-def _salvar_roblox_vinculos_sem_lock(dados):
-    temporario = ROBLOX_VINCULOS_FILE.with_suffix(".tmp")
-    with temporario.open(
-        "w",
-        encoding="utf-8",
-    ) as arquivo:
-        json.dump(
-            dados,
-            arquivo,
-            ensure_ascii=False,
-            indent=2,
-        )
-    temporario.replace(ROBLOX_VINCULOS_FILE)
-
-
-def carregar_roblox_vinculos():
-    with _roblox_vinculos_lock:
-        if not ROBLOX_VINCULOS_FILE.exists():
-            _salvar_roblox_vinculos_sem_lock(
-                roblox_vinculos_vazio()
-            )
-
-        try:
-            with ROBLOX_VINCULOS_FILE.open(
-                "r",
-                encoding="utf-8",
-            ) as arquivo:
-                dados = json.load(arquivo)
-        except (
-            OSError,
-            json.JSONDecodeError,
-        ):
-            dados = roblox_vinculos_vazio()
-
-        if not isinstance(dados, dict):
-            dados = roblox_vinculos_vazio()
-        if not isinstance(dados.get("vinculos"), dict):
-            dados["vinculos"] = {}
-        if not isinstance(dados.get("pendentes"), dict):
-            dados["pendentes"] = {}
-        dados.setdefault("versao", 1)
-
-        agora = datetime.now(timezone.utc)
-        expirados = []
-        for token, item in dados["pendentes"].items():
-            expira = _parse_iso_utc(
-                item.get("expira_em")
-                if isinstance(item, dict)
-                else None
-            )
-            if expira is None or expira <= agora:
-                expirados.append(token)
-        if expirados:
-            for token in expirados:
-                dados["pendentes"].pop(token, None)
-            _salvar_roblox_vinculos_sem_lock(dados)
-
-        return dados
-
-
-def salvar_roblox_vinculos(dados):
-    with _roblox_vinculos_lock:
-        _salvar_roblox_vinculos_sem_lock(dados)
-
-
-def _autorizado_roblox(payload=None):
-    segredo = request.headers.get(
-        "X-Roblox-Link-Secret",
-        "",
-    ).strip()
-    if not segredo and isinstance(payload, dict):
-        segredo = str(
-            payload.get("secret")
-            or ""
-        ).strip()
-
-    return bool(
-        ROBLOX_VINCULO_SECRET
-        and segredo
-        and secrets.compare_digest(
-            segredo,
-            ROBLOX_VINCULO_SECRET,
-        )
-    )
-
-
-def _roblox_configurado():
-    return bool(
-        ROBLOX_CLIENT_ID
-        and ROBLOX_CLIENT_SECRET
-        and ROBLOX_REDIRECT_URI
-    )
-
-
-def _pagina_roblox(
-    titulo,
-    mensagem,
-    sucesso=False,
-):
-    cor = "#57F287" if sucesso else "#ED4245"
-    icone = "✅" if sucesso else "⚠️"
-    titulo_seguro = str(titulo).replace(
-        "<", "&lt;"
-    ).replace(">", "&gt;")
-    mensagem_segura = str(mensagem).replace(
-        "<", "&lt;"
-    ).replace(">", "&gt;")
-    return f"""<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{titulo_seguro} • Resenha Máxima</title>
-<style>
-body {{
-  margin:0; min-height:100vh; display:grid; place-items:center;
-  background:#111214; color:#fff; font-family:Arial,sans-serif;
-}}
-.card {{
-  width:min(560px,calc(100% - 40px)); background:#1e1f22;
-  border:1px solid #2b2d31; border-radius:18px; padding:30px;
-  box-shadow:0 18px 60px rgba(0,0,0,.35);
-}}
-h1 {{ margin:0 0 14px; font-size:24px; }}
-p {{ color:#dbdee1; line-height:1.55; white-space:pre-line; }}
-.badge {{ color:{cor}; font-weight:700; }}
-small {{ color:#949ba4; }}
-</style>
-</head>
-<body>
-  <main class="card">
-    <div class="badge">{icone} RESENHA MÁXIMA</div>
-    <h1>{titulo_seguro}</h1>
-    <p>{mensagem_segura}</p>
-    <small>Você já pode voltar para o Discord.</small>
-  </main>
-</body>
-</html>"""
-
-
-def _post_form_roblox(url, campos):
-    corpo = urllib.parse.urlencode(
-        campos
-    ).encode("utf-8")
-    requisicao = urllib.request.Request(
-        url,
-        data=corpo,
-        headers={
-            "Content-Type": (
-                "application/x-www-form-urlencoded"
-            ),
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(
-        requisicao,
-        timeout=12,
-    ) as resposta:
-        bruto = resposta.read().decode(
-            "utf-8",
-            errors="replace",
-        )
-    return json.loads(bruto)
-
-
-def _userinfo_roblox(access_token):
-    requisicao = urllib.request.Request(
-        ROBLOX_USERINFO_URL,
-        headers={
-            "Authorization": (
-                f"Bearer {access_token}"
-            ),
-            "Accept": "application/json",
-        },
-        method="GET",
-    )
-    with urllib.request.urlopen(
-        requisicao,
-        timeout=12,
-    ) as resposta:
-        bruto = resposta.read().decode(
-            "utf-8",
-            errors="replace",
-        )
-    return json.loads(bruto)
-
 # =========================================================
 # SITE / PAINEL WEB
 # =========================================================
@@ -1975,6 +1760,212 @@ def canal_eventos_id(canais=None):
     return None
 
 
+
+def _somente_digitos(valor):
+    texto = str(valor or "").strip()
+    return texto if texto.isdigit() else None
+
+
+def _procurar_ids_vinculo_em_objeto(objeto, roblox_id):
+    """Procura vínculo Roblox↔Discord em formatos antigos sem apagar dados."""
+    alvo = str(int(roblox_id))
+
+    if isinstance(objeto, dict):
+        valor_direto = objeto.get(alvo)
+        if isinstance(valor_direto, (str, int)) and _somente_digitos(valor_direto):
+            return int(valor_direto)
+
+        if isinstance(valor_direto, dict):
+            for chave in (
+                "discord_id", "discordId", "discord_user_id",
+                "id_discord", "usuario_discord_id", "user_id"
+            ):
+                encontrado = _somente_digitos(valor_direto.get(chave))
+                if encontrado:
+                    return int(encontrado)
+
+        roblox_keys = (
+            "roblox_id", "robloxId", "roblox_user_id",
+            "robloxUserId", "id_roblox", "usuario_roblox_id"
+        )
+        discord_keys = (
+            "discord_id", "discordId", "discord_user_id",
+            "discordUserId", "id_discord", "usuario_discord_id"
+        )
+
+        roblox_encontrado = None
+        for chave in roblox_keys:
+            valor = _somente_digitos(objeto.get(chave))
+            if valor:
+                roblox_encontrado = valor
+                break
+
+        if roblox_encontrado == alvo:
+            for chave in discord_keys:
+                valor = _somente_digitos(objeto.get(chave))
+                if valor:
+                    return int(valor)
+
+        for valor in objeto.values():
+            encontrado = _procurar_ids_vinculo_em_objeto(valor, roblox_id)
+            if encontrado:
+                return encontrado
+
+    elif isinstance(objeto, list):
+        for item in objeto:
+            encontrado = _procurar_ids_vinculo_em_objeto(item, roblox_id)
+            if encontrado:
+                return encontrado
+
+    return None
+
+
+def discord_id_por_roblox_id(roblox_id):
+    """Mantém compatibilidade com nomes/formatos antigos de arquivo de vínculo."""
+    candidatos = [
+        ROBLOX_LINKS_FILE,
+        DATA_DIR / "roblox_discord_links.json",
+        DATA_DIR / "vinculos_roblox.json",
+        DATA_DIR / "links_roblox.json",
+        DATA_DIR / "vinculos.json",
+        USERS_FILE,
+    ]
+
+    vistos = set()
+    for caminho in candidatos:
+        caminho = Path(caminho)
+        chave = str(caminho)
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+
+        if not caminho.exists():
+            continue
+
+        try:
+            dados = json.loads(caminho.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        encontrado = _procurar_ids_vinculo_em_objeto(dados, roblox_id)
+        if encontrado:
+            return encontrado
+
+    return None
+
+
+async def _buscar_membro_direto(guild_id, discord_id):
+    guild = bot.get_guild(int(guild_id))
+    if guild is None:
+        return None, "guild_unavailable"
+
+    try:
+        membro = await guild.fetch_member(int(discord_id))
+        return membro, None
+    except discord.NotFound:
+        return None, "not_in_guild"
+    except discord.Forbidden:
+        membro = guild.get_member(int(discord_id))
+        return (membro, None) if membro is not None else (None, "forbidden")
+    except discord.HTTPException:
+        membro = guild.get_member(int(discord_id))
+        return (membro, None) if membro is not None else (None, "http_error")
+
+
+def _codigo_cargo_por_prioridade(membro, prioridade):
+    if membro is None:
+        return None
+    ids = {cargo.id for cargo in getattr(membro, "roles", [])}
+    for cargo_id, codigo in prioridade:
+        if cargo_id in ids:
+            return codigo
+    return None
+
+
+async def obter_game_profile_roblox(roblox_id):
+    discord_id = discord_id_por_roblox_id(roblox_id)
+
+    if discord_id is None:
+        return {
+            "ok": True,
+            "linked": False,
+            "in_main_server": False,
+            "in_event_server": False,
+            "main_role": None,
+            "second_role": None,
+            "game_permission": "Dono" if int(roblox_id) == ROBLOX_OWNER_USER_ID else "Não membro",
+            "discord_bonus_eligible": False,
+            "discord_bonus_chance": 0.40,
+        }
+
+    membro_principal, erro_principal = await _buscar_membro_direto(
+        MAIN_DISCORD_GUILD_ID, discord_id
+    )
+    membro_eventos, erro_eventos = await _buscar_membro_direto(
+        EVENTOS_GUILD_ID, discord_id
+    )
+
+    in_main = membro_principal is not None
+    in_event = membro_eventos is not None
+    main_role = _codigo_cargo_por_prioridade(membro_principal, MAIN_ROLE_PRIORITY)
+    second_role = _codigo_cargo_por_prioridade(membro_eventos, EVENT_ROLE_PRIORITY)
+
+    if int(roblox_id) == ROBLOX_OWNER_USER_ID:
+        permissao = "Dono"
+    elif not in_main:
+        permissao = "Não membro"
+    elif main_role == "ADM_DC":
+        permissao = "Admin"
+    elif second_role is not None:
+        permissao = "Eventos"
+    else:
+        permissao = "Membro"
+
+    resposta = {
+        "ok": True,
+        "linked": True,
+        "discord_id": str(discord_id),
+        "in_main_server": in_main,
+        "in_event_server": in_event,
+        "main_role": main_role,
+        "second_role": second_role,
+        "game_permission": permissao,
+        "discord_bonus_eligible": True,
+        "discord_bonus_chance": 0.40,
+    }
+
+    erros = []
+    if erro_principal not in (None, "not_in_guild"):
+        erros.append(f"principal:{erro_principal}")
+    if erro_eventos not in (None, "not_in_guild"):
+        erros.append(f"eventos:{erro_eventos}")
+    if erros:
+        resposta["warning"] = ",".join(erros)
+
+    return resposta
+
+
+def obter_game_profile_roblox_sync(roblox_id):
+    if not TOKEN or not bot.is_ready() or BOT_LOOP is None:
+        return {
+            "ok": False,
+            "linked": bool(discord_id_por_roblox_id(roblox_id)),
+            "error": "discord_bot_not_ready",
+        }
+
+    try:
+        futuro = asyncio.run_coroutine_threadsafe(
+            obter_game_profile_roblox(roblox_id), BOT_LOOP
+        )
+        return futuro.result(timeout=12)
+    except Exception as erro:
+        return {
+            "ok": False,
+            "linked": bool(discord_id_por_roblox_id(roblox_id)),
+            "error": f"{type(erro).__name__}: {erro}",
+        }
+
+
 def nivel_sessao():
     return session.get("nivel")
 
@@ -2041,6 +2032,13 @@ def somente_full(func):
         return func(*args, **kwargs)
 
     return wrapper
+
+
+
+
+@app.get("/api/roblox/game-profile/<int:roblox_id>")
+def api_roblox_game_profile(roblox_id):
+    return obter_game_profile_roblox_sync(roblox_id)
 
 
 @app.get("/api/site-account/<int:discord_id>")
@@ -2885,689 +2883,6 @@ def remover_futura_atualizacao():
     except Exception as erro:
         flash(f"❌ Não foi possível remover: {erro}")
     return redirect(url_for("painel", aba="atualizacoes"))
-
-# =========================================================
-# ROBLOX — API INTERNA + OAUTH
-# =========================================================
-
-@app.route(
-    "/api/roblox/criar-vinculo",
-    methods=["POST"],
-)
-def api_roblox_criar_vinculo():
-    payload = request.get_json(silent=True) or {}
-    if not _autorizado_roblox(payload):
-        return jsonify({
-            "ok": False,
-            "erro": "Não autorizado.",
-        }), 401
-
-    if not _roblox_configurado():
-        return jsonify({
-            "ok": False,
-            "erro": (
-                "OAuth Roblox ainda não configurado no SITE. "
-                "Defina ROBLOX_CLIENT_ID, ROBLOX_CLIENT_SECRET "
-                "e ROBLOX_REDIRECT_URI."
-            ),
-        }), 503
-
-    discord_id = str(
-        payload.get("discord_id")
-        or ""
-    ).strip()
-    guild_id = str(
-        payload.get("guild_id")
-        or ""
-    ).strip()
-    discord_nome = str(
-        payload.get("discord_nome")
-        or ""
-    ).strip()[:150]
-
-    if not discord_id.isdigit():
-        return jsonify({
-            "ok": False,
-            "erro": "Discord ID inválido.",
-        }), 400
-
-    dados = carregar_roblox_vinculos()
-
-    # Mantém somente a solicitação mais recente do usuário.
-    for token_antigo, pendente in list(
-        dados["pendentes"].items()
-    ):
-        if str(
-            pendente.get("discord_id")
-            or ""
-        ) == discord_id:
-            dados["pendentes"].pop(
-                token_antigo,
-                None,
-            )
-
-    token = secrets.token_urlsafe(24)
-    oauth_state = secrets.token_urlsafe(32)
-    nonce = secrets.token_urlsafe(24)
-    agora = datetime.now(timezone.utc)
-    expira = agora + timedelta(
-        minutes=ROBLOX_PENDENCIA_MINUTOS
-    )
-
-    dados["pendentes"][token] = {
-        "discord_id": discord_id,
-        "discord_nome": discord_nome,
-        "guild_id": guild_id,
-        "oauth_state": oauth_state,
-        "nonce": nonce,
-        "criado_em": agora.isoformat(),
-        "expira_em": expira.isoformat(),
-    }
-    salvar_roblox_vinculos(dados)
-
-    url = (
-        request.url_root.rstrip("/")
-        + url_for(
-            "roblox_iniciar",
-            token=token,
-        )
-    )
-    return jsonify({
-        "ok": True,
-        "url": url,
-        "expira_em": expira.isoformat(),
-    })
-
-
-@app.route("/roblox/iniciar/<token>")
-def roblox_iniciar(token):
-    dados = carregar_roblox_vinculos()
-    pendente = dados["pendentes"].get(
-        str(token)
-    )
-    if not pendente:
-        return (
-            _pagina_roblox(
-                "Link expirado",
-                (
-                    "Este link de vinculação não existe mais "
-                    "ou passou do prazo de 15 minutos.\n\n"
-                    "Use /roblox vincular novamente no Discord."
-                ),
-            ),
-            410,
-        )
-
-    if not _roblox_configurado():
-        return (
-            _pagina_roblox(
-                "Roblox ainda não configurado",
-                (
-                    "O sistema foi instalado, mas as credenciais "
-                    "OAuth do Roblox ainda não foram configuradas "
-                    "no site."
-                ),
-            ),
-            503,
-        )
-
-    parametros = {
-        "client_id": ROBLOX_CLIENT_ID,
-        "redirect_uri": ROBLOX_REDIRECT_URI,
-        "scope": "openid profile",
-        "response_type": "code",
-        "state": pendente["oauth_state"],
-        "nonce": pendente["nonce"],
-    }
-    destino = (
-        ROBLOX_AUTHORIZE_URL
-        + "?"
-        + urllib.parse.urlencode(parametros)
-    )
-    return redirect(destino)
-
-
-@app.route("/roblox/callback")
-def roblox_callback():
-    erro_oauth = str(
-        request.args.get("error")
-        or ""
-    ).strip()
-    if erro_oauth:
-        descricao = str(
-            request.args.get("error_description")
-            or "A autorização foi cancelada ou recusada."
-        )
-        return (
-            _pagina_roblox(
-                "Vinculação cancelada",
-                descricao,
-            ),
-            400,
-        )
-
-    code = str(
-        request.args.get("code")
-        or ""
-    ).strip()
-    state = str(
-        request.args.get("state")
-        or ""
-    ).strip()
-    if not code or not state:
-        return (
-            _pagina_roblox(
-                "Resposta inválida",
-                "O Roblox não devolveu o código de autorização esperado.",
-            ),
-            400,
-        )
-
-    dados = carregar_roblox_vinculos()
-    token_pendente = None
-    pendente = None
-    for token, item in dados["pendentes"].items():
-        if secrets.compare_digest(
-            str(item.get("oauth_state") or ""),
-            state,
-        ):
-            token_pendente = token
-            pendente = item
-            break
-
-    if not pendente:
-        return (
-            _pagina_roblox(
-                "Sessão expirada",
-                (
-                    "Não encontrei uma solicitação válida para "
-                    "esta autorização. Use /roblox vincular novamente."
-                ),
-            ),
-            410,
-        )
-
-    try:
-        tokens = _post_form_roblox(
-            ROBLOX_TOKEN_URL,
-            {
-                "code": code,
-                "grant_type": "authorization_code",
-                "client_id": ROBLOX_CLIENT_ID,
-                "client_secret": ROBLOX_CLIENT_SECRET,
-                "redirect_uri": ROBLOX_REDIRECT_URI,
-            },
-        )
-        access_token = str(
-            tokens.get("access_token")
-            or ""
-        ).strip()
-        if not access_token:
-            raise RuntimeError(
-                "O Roblox não devolveu access_token."
-            )
-
-        perfil = _userinfo_roblox(
-            access_token
-        )
-    except (
-        urllib.error.HTTPError,
-        urllib.error.URLError,
-        TimeoutError,
-        json.JSONDecodeError,
-        RuntimeError,
-    ) as erro:
-        print(
-            "Erro no OAuth Roblox: "
-            f"{type(erro).__name__}: {erro}"
-        )
-        return (
-            _pagina_roblox(
-                "Falha ao verificar a conta",
-                (
-                    "Não consegui concluir a verificação com o "
-                    "Roblox agora. Tente novamente pelo Discord."
-                ),
-            ),
-            502,
-        )
-
-    roblox_id = str(
-        perfil.get("sub")
-        or ""
-    ).strip()
-    if not roblox_id.isdigit():
-        return (
-            _pagina_roblox(
-                "Perfil Roblox inválido",
-                (
-                    "O Roblox autenticou a sessão, mas não enviou "
-                    "um User ID válido."
-                ),
-            ),
-            502,
-        )
-
-    discord_id = str(
-        pendente.get("discord_id")
-        or ""
-    )
-
-    # Uma conta Roblox não pode representar dois Discords ao mesmo tempo.
-    for outro_discord_id, vinculo in dados[
-        "vinculos"
-    ].items():
-        if (
-            outro_discord_id != discord_id
-            and str(
-                vinculo.get("roblox_id")
-                or ""
-            ) == roblox_id
-        ):
-            return (
-                _pagina_roblox(
-                    "Conta já vinculada",
-                    (
-                        "Essa conta Roblox já está vinculada a "
-                        "outro membro do Discord.\n\n"
-                        "Se isso estiver incorreto, procure a administração."
-                    ),
-                ),
-                409,
-            )
-
-    username = str(
-        perfil.get("preferred_username")
-        or perfil.get("nickname")
-        or perfil.get("name")
-        or roblox_id
-    )[:80]
-    display_name = str(
-        perfil.get("name")
-        or perfil.get("nickname")
-        or username
-    )[:80]
-    profile_url = str(
-        perfil.get("profile")
-        or (
-            f"https://www.roblox.com/users/"
-            f"{roblox_id}/profile"
-        )
-    )[:500]
-    picture = str(
-        perfil.get("picture")
-        or ""
-    )[:1000]
-
-    dados["vinculos"][discord_id] = {
-        "discord_id": discord_id,
-        "discord_nome": str(
-            pendente.get("discord_nome")
-            or ""
-        )[:150],
-        "guild_id": str(
-            pendente.get("guild_id")
-            or ""
-        ),
-        "roblox_id": roblox_id,
-        "username": username,
-        "display_name": display_name,
-        "profile": profile_url,
-        "picture": picture,
-        "verificado_em": _agora_utc_iso(),
-    }
-    if token_pendente:
-        dados["pendentes"].pop(
-            token_pendente,
-            None,
-        )
-    salvar_roblox_vinculos(dados)
-
-    return _pagina_roblox(
-        "Conta Roblox vinculada!",
-        (
-            f"Roblox: @{username}\n"
-            f"Display: {display_name}\n\n"
-            "Volte ao Discord e clique em “Já vinculei”. "
-            "Depois disso, a conta aparecerá no /perfil."
-        ),
-        sucesso=True,
-    )
-
-
-@app.route("/api/roblox/vinculo/<discord_id>")
-def api_roblox_vinculo(discord_id):
-    if not _autorizado_roblox():
-        return jsonify({
-            "ok": False,
-            "erro": "Não autorizado.",
-        }), 401
-
-    discord_id = str(
-        discord_id
-        or ""
-    ).strip()
-    if not discord_id.isdigit():
-        return jsonify({
-            "ok": False,
-            "erro": "Discord ID inválido.",
-        }), 400
-
-    dados = carregar_roblox_vinculos()
-    vinculo = dados["vinculos"].get(
-        discord_id
-    )
-    return jsonify({
-        "ok": True,
-        "vinculado": bool(vinculo),
-        "vinculo": vinculo,
-    })
-
-
-@app.route(
-    "/api/roblox/desvincular",
-    methods=["POST"],
-)
-def api_roblox_desvincular():
-    payload = request.get_json(silent=True) or {}
-    if not _autorizado_roblox(payload):
-        return jsonify({
-            "ok": False,
-            "erro": "Não autorizado.",
-        }), 401
-
-    discord_id = str(
-        payload.get("discord_id")
-        or ""
-    ).strip()
-    if not discord_id.isdigit():
-        return jsonify({
-            "ok": False,
-            "erro": "Discord ID inválido.",
-        }), 400
-
-    dados = carregar_roblox_vinculos()
-    removido = dados["vinculos"].pop(
-        discord_id,
-        None,
-    )
-    for token, item in list(
-        dados["pendentes"].items()
-    ):
-        if str(
-            item.get("discord_id")
-            or ""
-        ) == discord_id:
-            dados["pendentes"].pop(
-                token,
-                None,
-            )
-
-    salvar_roblox_vinculos(dados)
-
-    if removido is None:
-        return jsonify({
-            "ok": False,
-            "erro": "Nenhum vínculo encontrado.",
-        }), 404
-
-    return jsonify({
-        "ok": True,
-        "removido": removido,
-    })
-
-# =========================================================
-# ROBLOX — PERFIL PARA O JOGO / CARGOS DISCORD
-# =========================================================
-
-# Servidor principal oficial da RESENHA MÁXIMA.
-ROBLOX_GAME_MAIN_GUILD_ID = int(
-    os.getenv("ROBLOX_GAME_MAIN_GUILD_ID", "1532613054703997012")
-    or "1532613054703997012"
-)
-
-# Prioridade dos cargos visuais do servidor principal.
-ROBLOX_GAME_MAIN_ROLES = [
-    (1532613934883016704, "ADM_G"),
-    (1540876101763600424, "CF_DPT"),
-    (1533624911912767629, "ADM_DC"),
-    (1540987356520251482, "MOD_DC"),
-    (1532614113346453724, "MEM"),
-]
-
-# Prioridade dos cargos do servidor de Eventos.
-ROBLOX_GAME_EVENT_ROLES = [
-    (1541624067256352868, "CF_DPT_EVT"),
-    (1541624066396651580, "DIR_EVT"),
-    (1541624065054482472, "GER_EVT"),
-    (1541624064081268878, "COO_EVT"),
-    (1541624062910922843, "SUP_EVT"),
-    (1541624062298685530, "AP_EVT"),
-]
-
-
-async def _roblox_game_fetch_member(guild_id, discord_id):
-    guild_id = int(guild_id)
-    discord_id = int(discord_id)
-
-    guild = bot.get_guild(guild_id)
-
-    if guild is None:
-        print(
-            f"[ROBLOX GAME] Servidor {guild_id} não está no cache do bot. "
-            "Tentando buscar diretamente pela API do Discord..."
-        )
-
-        try:
-            guild = await bot.fetch_guild(guild_id)
-        except discord.NotFound:
-            print(
-                f"[ROBLOX GAME] Servidor {guild_id} não foi encontrado "
-                "pela conta do bot."
-            )
-            return None, False
-        except discord.Forbidden:
-            print(
-                f"[ROBLOX GAME] Bot sem acesso ao servidor {guild_id}."
-            )
-            return None, False
-        except discord.HTTPException as erro:
-            print(
-                f"[ROBLOX GAME] Erro HTTP ao buscar servidor {guild_id}: {erro}"
-            )
-            return None, False
-
-    # Primeiro tenta o cache, quando o objeto suporta get_member.
-    get_member = getattr(guild, "get_member", None)
-    if callable(get_member):
-        membro = get_member(discord_id)
-        if membro is not None:
-            print(
-                f"[ROBLOX GAME] Membro {discord_id} encontrado no cache "
-                f"do servidor {guild_id}."
-            )
-            return membro, True
-
-    # Depois consulta DIRETAMENTE a API do Discord.
-    # Isso funciona mesmo quando o membro não está carregado no cache.
-    try:
-        membro = await guild.fetch_member(discord_id)
-
-        print(
-            f"[ROBLOX GAME] Membro {discord_id} confirmado pela API "
-            f"no servidor {guild_id}."
-        )
-
-        return membro, True
-
-    except discord.NotFound:
-        print(
-            f"[ROBLOX GAME] Membro {discord_id} NÃO está no servidor {guild_id}."
-        )
-        return None, True
-
-    except discord.Forbidden:
-        print(
-            f"[ROBLOX GAME] Bot sem permissão para consultar membros "
-            f"do servidor {guild_id}."
-        )
-        return None, False
-
-    except discord.HTTPException as erro:
-        print(
-            f"[ROBLOX GAME] Erro HTTP ao consultar membro {discord_id} "
-            f"no servidor {guild_id}: {erro}"
-        )
-        return None, False
-
-
-async def _roblox_game_discord_profile(discord_id):
-    cfg = carregar_servidores_config()
-
-    # Usa SEMPRE o servidor principal oficial do jogo.
-    # Não sobrescreve com GUILD_ID, porque essa variável pode apontar
-    # para outro servidor usado por partes antigas do bot.
-    principal_id = ROBLOX_GAME_MAIN_GUILD_ID
-
-    eventos_id = int(
-        cfg.get("eventos_guild_id")
-        or EVENTOS_GUILD_ID
-        or 1541541588122079283
-    )
-
-    membro_principal, principal_checked = await _roblox_game_fetch_member(
-        principal_id,
-        discord_id,
-    )
-
-    membro_eventos, eventos_checked = await _roblox_game_fetch_member(
-        eventos_id,
-        discord_id,
-    )
-
-    if not principal_checked:
-        raise RuntimeError(
-            "Não consegui confirmar a presença no servidor principal do Discord."
-        )
-
-    main_role = None
-    second_role = None
-
-    if membro_principal is not None:
-        ids = {cargo.id for cargo in membro_principal.roles}
-        for cargo_id, chave in ROBLOX_GAME_MAIN_ROLES:
-            if cargo_id in ids:
-                main_role = chave
-                break
-
-    if membro_eventos is not None:
-        ids = {cargo.id for cargo in membro_eventos.roles}
-        for cargo_id, chave in ROBLOX_GAME_EVENT_ROLES:
-            if cargo_id in ids:
-                second_role = chave
-                break
-
-    return {
-        "in_main_server": membro_principal is not None,
-        "in_event_server": membro_eventos is not None if eventos_checked else False,
-        "main_role": main_role,
-        "second_role": second_role,
-    }
-
-
-def _roblox_game_discord_profile_sync(discord_id):
-    if not bot.is_ready() or BOT_LOOP is None:
-        raise RuntimeError("O bot ainda não está conectado ao Discord.")
-
-    futuro = asyncio.run_coroutine_threadsafe(
-        _roblox_game_discord_profile(discord_id),
-        BOT_LOOP,
-    )
-    return futuro.result(timeout=12)
-
-
-@app.route("/api/roblox/game-profile/<roblox_id>")
-def api_roblox_game_profile(roblox_id):
-    roblox_id = str(roblox_id or "").strip()
-
-    print(
-        "[ROBLOX GAME ROUTE] chamada recebida"
-        f" | roblox_id={roblox_id}"
-        f" | bot_ready={bot.is_ready()}"
-        f" | main_guild_id={ROBLOX_GAME_MAIN_GUILD_ID}",
-        flush=True,
-    )
-
-    if not roblox_id.isdigit():
-        return jsonify({
-            "ok": False,
-            "erro": "Roblox ID inválido.",
-        }), 400
-
-    dados = carregar_roblox_vinculos()
-
-    discord_id = None
-    vinculo = None
-
-    for possivel_discord_id, item in dados.get("vinculos", {}).items():
-        if str(item.get("roblox_id") or "") == roblox_id:
-            discord_id = str(possivel_discord_id)
-            vinculo = item
-            break
-
-    if not vinculo or not discord_id:
-        print(
-            "[ROBLOX GAME ROUTE] Roblox sem vínculo encontrado"
-            f" | roblox_id={roblox_id}",
-            flush=True,
-        )
-        return jsonify({
-            "ok": True,
-            "linked": False,
-            "in_main_server": False,
-            "in_event_server": False,
-            "main_role": None,
-            "second_role": None,
-        })
-
-    print(
-        "[ROBLOX GAME ROUTE] vínculo encontrado"
-        f" | roblox_id={roblox_id}"
-        f" | discord_id={discord_id}",
-        flush=True,
-    )
-
-    try:
-        discord_profile = _roblox_game_discord_profile_sync(discord_id)
-    except Exception as erro:
-        print(
-            "Erro ao consultar Discord para Roblox game-profile: "
-            f"{type(erro).__name__}: {erro}"
-        )
-        return jsonify({
-            "ok": False,
-            "erro": "Não consegui confirmar o membro no Discord agora.",
-        }), 503
-
-    print(
-        "[ROBLOX GAME ROUTE] resultado final"
-        f" | discord_id={discord_id}"
-        f" | in_main_server={bool(discord_profile['in_main_server'])}"
-        f" | in_event_server={bool(discord_profile['in_event_server'])}"
-        f" | main_role={discord_profile['main_role']}"
-        f" | second_role={discord_profile['second_role']}",
-        flush=True,
-    )
-
-    return jsonify({
-        "ok": True,
-        "linked": True,
-        "in_main_server": bool(discord_profile["in_main_server"]),
-        "in_event_server": bool(discord_profile["in_event_server"]),
-        "main_role": discord_profile["main_role"],
-        "second_role": discord_profile["second_role"],
-    })
-
 
 @app.route("/status")
 def status():
