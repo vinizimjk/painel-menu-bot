@@ -1523,7 +1523,7 @@ ROBLOX_CLIENT_SECRET = os.getenv(
 ).strip()
 ROBLOX_REDIRECT_URI = os.getenv(
     "ROBLOX_REDIRECT_URI",
-    "https://resenha-maxima.up.railway.app/roblox/callback",
+    "https://painel-menu-bot-production.up.railway.app/roblox/callback",
 ).strip()
 
 ROBLOX_AUTHORIZE_URL = (
@@ -4729,6 +4729,37 @@ def api_roblox_desvincular():
     return jsonify({
         "ok": True,
         "removido": removido,
+    })
+
+
+@app.route(
+    "/api/roblox/limpar-vinculos",
+    methods=["POST"],
+)
+def api_roblox_limpar_vinculos():
+    payload = request.get_json(silent=True) or {}
+    if not _autorizado_roblox(payload):
+        return jsonify({
+            "ok": False,
+            "erro": "Não autorizado.",
+        }), 401
+
+    if payload.get("confirmar") is not True:
+        return jsonify({
+            "ok": False,
+            "erro": "Confirmação obrigatória.",
+        }), 400
+
+    dados = carregar_roblox_vinculos()
+    total_vinculos = len(dados.get("vinculos") or {})
+    total_pendentes = len(dados.get("pendentes") or {})
+
+    salvar_roblox_vinculos(roblox_vinculos_vazio())
+
+    return jsonify({
+        "ok": True,
+        "vinculos_removidos": total_vinculos,
+        "pendentes_removidos": total_pendentes,
     })
 
 
