@@ -1536,6 +1536,8 @@ ROBLOX_USERINFO_URL = (
     "https://apis.roblox.com/oauth/v1/userinfo"
 )
 ROBLOX_PENDENCIA_MINUTOS = 15
+ROBLOX_REABRIR_COOLDOWN_SEGUNDOS = 20
+ROBLOX_CALLBACK_COOLDOWN_SEGUNDOS = 60
 
 
 def roblox_vinculos_vazio():
@@ -4348,18 +4350,22 @@ def api_roblox_criar_vinculo():
 
     dados = carregar_roblox_vinculos()
 
-    # Mantém somente a solicitação mais recente do usuário.
-    for token_antigo, pendente in list(
+    # V18: não cria vários OAuths para a mesma pessoa. Se já existir
+    # uma solicitação válida, reaproveita exatamente o mesmo link.
+    for token_existente, pendente_existente in list(
         dados["pendentes"].items()
     ):
-        if str(
-            pendente.get("discord_id")
-            or ""
-        ) == discord_id:
-            dados["pendentes"].pop(
-                token_antigo,
-                None,
+        if str(pendente_existente.get("discord_id") or "") == discord_id:
+            url_existente = (
+                request.url_root.rstrip("/")
+                + url_for("roblox_iniciar", token=token_existente)
             )
+            return jsonify({
+                "ok": True,
+                "url": url_existente,
+                "expira_em": str(pendente_existente.get("expira_em") or ""),
+                "reutilizado": True,
+            })
 
     token = secrets.token_urlsafe(24)
     oauth_state = secrets.token_urlsafe(32)
@@ -4425,6 +4431,26 @@ def roblox_iniciar(token):
             ),
             503,
         )
+
+    # Evita que duplo clique/reload dispare várias autorizações quase
+    # simultâneas no Roblox para o mesmo vínculo.
+    agora = datetime.now(timezone.utc)
+    ultimo_inicio = _parse_iso_utc(pendente.get("iniciado_em"))
+    if (
+        ultimo_inicio is not None
+        and (agora - ultimo_inicio).total_seconds()
+        < ROBLOX_REABRIR_COOLDOWN_SEGUNDOS
+    ):
+        return (
+            _pagina_roblox(
+                "Verificação já iniciada",
+                "A autorização do Roblox já foi aberta há poucos segundos. "
+                "Volte para a aba do Roblox e continue por ela. Não é necessário abrir outro link.",
+            ),
+            429,
+        )
+    pendente["iniciado_em"] = agora.isoformat()
+    salvar_roblox_vinculos(dados)
 
     parametros = {
         "client_id": ROBLOX_CLIENT_ID,
@@ -4502,6 +4528,25 @@ def roblox_callback():
             410,
         )
 
+    # Protege contra callback duplicado (duplo toque, voltar/avançar ou
+    # navegador reenviando a mesma autorização).
+    agora_callback = datetime.now(timezone.utc)
+    processando_em = _parse_iso_utc(pendente.get("processando_em"))
+    if (
+        processando_em is not None
+        and (agora_callback - processando_em).total_seconds()
+        < ROBLOX_CALLBACK_COOLDOWN_SEGUNDOS
+    ):
+        return (
+            _pagina_roblox(
+                "Verificação em andamento",
+                "Essa autorização já está sendo processada. Aguarde alguns segundos e volte ao Discord.",
+            ),
+            202,
+        )
+    pendente["processando_em"] = agora_callback.isoformat()
+    salvar_roblox_vinculos(dados)
+
     try:
         tokens = _post_form_roblox(
             ROBLOX_TOKEN_URL,
@@ -4536,6 +4581,12 @@ def roblox_callback():
             "Erro no OAuth Roblox: "
             f"{type(erro).__name__}: {erro}"
         )
+        # Se a chamada externa falhou de verdade, libera uma nova tentativa.
+        dados_falha = carregar_roblox_vinculos()
+        pendente_falha = dados_falha.get("pendentes", {}).get(token_pendente)
+        if isinstance(pendente_falha, dict):
+            pendente_falha.pop("processando_em", None)
+            salvar_roblox_vinculos(dados_falha)
         return (
             _pagina_roblox(
                 "Falha ao verificar a conta",
