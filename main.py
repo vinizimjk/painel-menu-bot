@@ -4357,6 +4357,9 @@ def api_roblox_criar_vinculo():
         payload.get("discord_nome")
         or ""
     ).strip()[:150]
+    # Só chega por esta API interna autenticada pelo ROBLOX_VINCULO_SECRET.
+    # O bot envia True apenas quando o membro possui o cargo Conta de testes.
+    modo_teste = payload.get("modo_teste") is True
 
     if not discord_id.isdigit():
         return jsonify({
@@ -4370,6 +4373,12 @@ def api_roblox_criar_vinculo():
     # Reaproveita uma tentativa recém-criada; depois do cooldown, remove a
     # pendência antiga e cria state/PKCE novos.
     agora = datetime.now(timezone.utc)
+    if modo_teste:
+        # Conta de testes sempre recebe um fluxo OAuth novo, sem reutilizar
+        # pendência/cooldown anterior. Isso não remove o vínculo já salvo.
+        for token_existente, pendente_existente in list(dados["pendentes"].items()):
+            if str(pendente_existente.get("discord_id") or "") == discord_id:
+                dados["pendentes"].pop(token_existente, None)
     for token_existente, pendente_existente in list(dados["pendentes"].items()):
         if str(pendente_existente.get("discord_id") or "") != discord_id:
             continue
@@ -4402,6 +4411,7 @@ def api_roblox_criar_vinculo():
         "discord_id": discord_id,
         "discord_nome": discord_nome,
         "guild_id": guild_id,
+        "modo_teste": modo_teste,
         "oauth_state": oauth_state,
         "nonce": nonce,
         "code_verifier": code_verifier,
@@ -4462,7 +4472,8 @@ def roblox_iniciar(token):
     agora = datetime.now(timezone.utc)
     ultimo_inicio = _parse_iso_utc(pendente.get("iniciado_em"))
     if (
-        ultimo_inicio is not None
+        not bool(pendente.get("modo_teste"))
+        and ultimo_inicio is not None
         and (agora - ultimo_inicio).total_seconds()
         < ROBLOX_REABRIR_COOLDOWN_SEGUNDOS
     ):
