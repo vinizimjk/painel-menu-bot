@@ -1,5 +1,7 @@
 import asyncio
 import os
+import base64
+import hashlib
 import json
 import random
 import re
@@ -1538,6 +1540,16 @@ ROBLOX_USERINFO_URL = (
 ROBLOX_PENDENCIA_MINUTOS = 15
 ROBLOX_REABRIR_COOLDOWN_SEGUNDOS = 20
 ROBLOX_CALLBACK_COOLDOWN_SEGUNDOS = 60
+# V22: limita novas idas ao authorize.roblox.com por usuário.
+# O Roblox pode aplicar limites próprios; o site evita multiplicar tentativas.
+ROBLOX_NOVA_AUTORIZACAO_COOLDOWN_SEGUNDOS = 90
+
+
+def _roblox_pkce_novo():
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
 
 
 def roblox_vinculos_vazio():
@@ -3281,8 +3293,8 @@ def contexto_painel(
 
 
 @app.after_request
-def _injetar_link_estruturas_no_painel(response):
-    """Adiciona o Construtor ao menu sem exigir troca do index.html atual."""
+def _injetar_links_extras_no_painel(response):
+    """Adiciona Estruturas e IDs do Discord ao menu principal sem trocar index.html."""
     try:
         if (
             request.endpoint == "painel"
@@ -3291,26 +3303,30 @@ def _injetar_link_estruturas_no_painel(response):
             and "text/html" in response.content_type
         ):
             html = response.get_data(as_text=True)
-            if (
-                "rm-link-estruturas" not in html
-                and "</nav>" in html
-            ):
-                link = (
-                    '<a id="rm-link-estruturas" '
-                    'class="panel-tab" href="/estruturas">'
-                    '🏗️ Estruturas</a>'
+            links = ""
+            if "rm-link-estruturas" not in html:
+                links += (
+                    '<a id="rm-link-estruturas" class="panel-tab" '
+                    'href="/estruturas">🏗️ Estruturas</a>'
                 )
-                html = html.replace(
-                    "</nav>",
-                    link + "</nav>",
-                    1,
+            if "rm-link-ids-discord" not in html:
+                links += (
+                    '<a id="rm-link-ids-discord" class="panel-tab" '
+                    'href="/ids-discord">🪪 IDs do Discord</a>'
                 )
+            if links:
+                if "</nav>" in html:
+                    html = html.replace("</nav>", links + "</nav>", 1)
+                elif "</body>" in html:
+                    # Fallback visível caso o template atual não use <nav>.
+                    fallback = (
+                        '<div style="position:fixed;right:16px;bottom:16px;z-index:9999;'
+                        'display:flex;gap:8px;flex-wrap:wrap">' + links + '</div>'
+                    )
+                    html = html.replace("</body>", fallback + "</body>", 1)
                 response.set_data(html)
     except Exception as erro:
-        print(
-            "Não foi possível injetar link de Estruturas: "
-            f"{erro!r}"
-        )
+        print(f"Não foi possível injetar links extras no painel: {erro!r}")
     return response
 
 
@@ -4350,27 +4366,34 @@ def api_roblox_criar_vinculo():
 
     dados = carregar_roblox_vinculos()
 
-    # V18: não cria vários OAuths para a mesma pessoa. Se já existir
-    # uma solicitação válida, reaproveita exatamente o mesmo link.
-    for token_existente, pendente_existente in list(
-        dados["pendentes"].items()
-    ):
-        if str(pendente_existente.get("discord_id") or "") == discord_id:
-            url_existente = (
-                request.url_root.rstrip("/")
-                + url_for("roblox_iniciar", token=token_existente)
+    # V22: uma pessoa não pode disparar vários fluxos OAuth em sequência.
+    # Reaproveita uma tentativa recém-criada; depois do cooldown, remove a
+    # pendência antiga e cria state/PKCE novos.
+    agora = datetime.now(timezone.utc)
+    for token_existente, pendente_existente in list(dados["pendentes"].items()):
+        if str(pendente_existente.get("discord_id") or "") != discord_id:
+            continue
+        criado = _parse_iso_utc(pendente_existente.get("criado_em"))
+        iniciado = _parse_iso_utc(pendente_existente.get("iniciado_em"))
+        referencia = iniciado or criado
+        idade = (agora - referencia).total_seconds() if referencia else 999999
+        if idade < ROBLOX_NOVA_AUTORIZACAO_COOLDOWN_SEGUNDOS:
+            url_existente = request.url_root.rstrip("/") + url_for(
+                "roblox_iniciar", token=token_existente
             )
             return jsonify({
                 "ok": True,
                 "url": url_existente,
                 "expira_em": str(pendente_existente.get("expira_em") or ""),
                 "reutilizado": True,
+                "aguarde_segundos": max(0, int(ROBLOX_NOVA_AUTORIZACAO_COOLDOWN_SEGUNDOS - idade)),
             })
+        dados["pendentes"].pop(token_existente, None)
 
     token = secrets.token_urlsafe(24)
     oauth_state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(24)
-    agora = datetime.now(timezone.utc)
+    code_verifier, code_challenge = _roblox_pkce_novo()
     expira = agora + timedelta(
         minutes=ROBLOX_PENDENCIA_MINUTOS
     )
@@ -4381,6 +4404,8 @@ def api_roblox_criar_vinculo():
         "guild_id": guild_id,
         "oauth_state": oauth_state,
         "nonce": nonce,
+        "code_verifier": code_verifier,
+        "code_challenge": code_challenge,
         "criado_em": agora.isoformat(),
         "expira_em": expira.isoformat(),
     }
@@ -4459,6 +4484,8 @@ def roblox_iniciar(token):
         "response_type": "code",
         "state": pendente["oauth_state"],
         "nonce": pendente["nonce"],
+        "code_challenge": pendente.get("code_challenge", ""),
+        "code_challenge_method": "S256",
     }
     destino = (
         ROBLOX_AUTHORIZE_URL
@@ -4479,13 +4506,15 @@ def roblox_callback():
             request.args.get("error_description")
             or "A autorização foi cancelada ou recusada."
         )
-        return (
-            _pagina_roblox(
-                "Vinculação cancelada",
-                descricao,
-            ),
-            400,
-        )
+        status = 429 if "rate" in (erro_oauth + " " + descricao).lower() else 400
+        titulo = "Limite temporário do Roblox" if status == 429 else "Vinculação cancelada"
+        if status == 429:
+            descricao = (
+                "O próprio Roblox limitou novas autorizações temporariamente. "
+                "Aguarde alguns minutos antes de tentar de novo; o site não abrirá "
+                "vários fluxos ao mesmo tempo para a mesma pessoa."
+            )
+        return (_pagina_roblox(titulo, descricao), status)
 
     code = str(
         request.args.get("code")
@@ -4556,6 +4585,7 @@ def roblox_callback():
                 "client_id": ROBLOX_CLIENT_ID,
                 "client_secret": ROBLOX_CLIENT_SECRET,
                 "redirect_uri": ROBLOX_REDIRECT_URI,
+                "code_verifier": str(pendente.get("code_verifier") or ""),
             },
         )
         access_token = str(
