@@ -5364,6 +5364,53 @@ def status():
 # A trava abaixo impede duas inicializações dentro do mesmo processo.
 # =========================================================
 
+# =========================================================
+# INVENTARIO DE IDS DO DISCORD (V19)
+# =========================================================
+async def _coletar_ids_discord_v19():
+    guild = None
+    if GUILD_ID:
+        try: guild = bot.get_guild(int(GUILD_ID))
+        except (TypeError, ValueError): pass
+    if guild is None and bot.guilds: guild = bot.guilds[0]
+    if guild is None: return None
+    try:
+        if not guild.chunked: await guild.chunk(cache=True)
+    except Exception as erro: print(f"IDs Discord V19: chunk indisponível: {erro!r}")
+    cat = lambda c: c.category.name if getattr(c, "category", None) else "Sem categoria"
+    return {
+      "servidor":{"nome":guild.name,"id":str(guild.id)},
+      "cargos":[{"nome":r.name,"id":str(r.id)} for r in sorted(guild.roles,key=lambda x:x.position,reverse=True) if not r.is_default()],
+      "categorias":[{"nome":c.name,"id":str(c.id)} for c in sorted(guild.categories,key=lambda x:x.position)],
+      "texto":[{"nome":c.name,"id":str(c.id),"categoria":cat(c)} for c in guild.text_channels],
+      "voz":[{"nome":c.name,"id":str(c.id),"categoria":cat(c)} for c in guild.voice_channels],
+      "membros":[{"nome":str(m),"display":m.display_name,"id":str(m.id),"bot":bool(m.bot)} for m in sorted(guild.members,key=lambda x:x.display_name.casefold())],
+    }
+
+def _obter_ids_discord_sync_v19():
+    if not TOKEN or not bot.is_ready() or BOT_LOOP is None: return None,"O bot do site ainda não está pronto. Aguarde alguns segundos."
+    try:
+        f=asyncio.run_coroutine_threadsafe(_coletar_ids_discord_v19(),BOT_LOOP); d=f.result(timeout=20)
+        return (d,None) if d else (None,"Servidor não encontrado.")
+    except Exception as erro:
+        print(f"IDs Discord V19: {erro!r}"); return None,"Não consegui carregar os IDs agora."
+
+IDS_DISCORD_HTML_V19 = """<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>IDs Discord</title><style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#0f1014;color:#f5f5f5;font:15px Arial}.wrap{max-width:1180px;margin:auto;padding:24px}.top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.top h1{margin-right:auto}.btn,button{border:0;border-radius:9px;background:#2c2f38;color:#fff;padding:10px 13px;cursor:pointer}.primary{background:#5865f2}.search{width:100%;padding:13px;border:1px solid #30333d;border-radius:10px;background:#17191f;color:#fff;margin:15px 0}.card{background:#17191f;border:1px solid #292c34;border-radius:14px;margin:14px 0;overflow:hidden}.head{padding:14px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid #292c34}.head h2{margin:0;font-size:18px}.head span{opacity:.6}.head button{margin-left:auto}.row{display:grid;grid-template-columns:minmax(180px,1fr) minmax(190px,auto) auto;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid #22252c}.name small{display:block;opacity:.55;margin-top:3px}.id{font-family:monospace;user-select:all}.ok{position:fixed;right:18px;bottom:18px;background:#238636;padding:11px 15px;border-radius:9px;display:none}@media(max-width:650px){.row{grid-template-columns:1fr auto}.id{grid-column:1}.copy{grid-column:2;grid-row:1/3}}</style></head><body><div class='wrap'>
+<div class='top'><h1>🪪 IDs do Discord</h1><a class='btn' href='/'>← Painel</a><button class='primary' onclick='copyAll()'>Copiar tudo</button></div><p>{{dados.servidor.nome}} • <b>{{dados.servidor.id}}</b></p><input id='q' class='search' placeholder='Buscar nome ou ID...' oninput='filterRows()'>
+{% for key,titulo,items in secoes %}<section class='card'><div class='head'><h2>{{titulo}}</h2><span>{{items|length}}</span><button onclick=\"copySection('{{key}}')\">Copiar seção</button></div><div id='{{key}}'>{% for x in items %}<div class='row' data-search=\"{{(x.nome ~ ' ' ~ x.get('display','') ~ ' ' ~ x.id ~ ' ' ~ x.get('categoria',''))|lower}}\"><div class='name'><b>{{x.get('display') or x.nome}}</b>{% if x.get('display') and x.display != x.nome %}<small>@{{x.nome}}</small>{% endif %}{% if x.get('categoria') %}<small>{{x.categoria}}</small>{% endif %}{% if x.get('bot') %}<small>BOT</small>{% endif %}</div><div class='id'>{{x.id}}</div><button class='copy' onclick=\"copyText('{{x.id}}')\">Copiar</button></div>{% endfor %}</div></section>{% endfor %}</div><div id='ok' class='ok'>Copiado ✓</div><script>
+function toast(){let x=document.getElementById('ok');x.style.display='block';clearTimeout(window._t);window._t=setTimeout(()=>x.style.display='none',1200)} async function copyText(t){await navigator.clipboard.writeText(t);toast()} function textOf(r){return [...r.querySelectorAll('.row')].filter(x=>x.style.display!='none').map(x=>x.querySelector('.name b').innerText+' — '+x.querySelector('.id').innerText).join('\\n')} async function copySection(id){await copyText(textOf(document.getElementById(id)))} async function copyAll(){let o='SERVIDOR\\n{{dados.servidor.nome}} — {{dados.servidor.id}}\\n\\n';document.querySelectorAll('.card').forEach(c=>o+=c.querySelector('h2').innerText.toUpperCase()+'\\n'+textOf(c)+'\\n\\n');await copyText(o.trim())} function filterRows(){let q=document.getElementById('q').value.toLowerCase().trim();document.querySelectorAll('.row').forEach(r=>r.style.display=!q||r.dataset.search.includes(q)?'grid':'none')}</script></body></html>"""
+
+@app.get('/ids-discord')
+@login_obrigatorio
+@somente_full
+def ids_discord_v19():
+    dados,erro=_obter_ids_discord_sync_v19()
+    if erro: flash('❌ '+erro); return redirect(url_for('painel'))
+    secoes=[('cargos','🎭 Cargos',dados['cargos']),('categorias','📁 Categorias',dados['categorias']),('texto','💬 Canais de texto',dados['texto']),('voz','🔊 Canais de voz',dados['voz']),('membros','👥 Membros',dados['membros'])]
+    return render_template_string(IDS_DISCORD_HTML_V19,dados=dados,secoes=secoes)
+
+
 _bot_thread_lock = threading.Lock()
 _bot_thread_started = False
 _bot_thread = None
