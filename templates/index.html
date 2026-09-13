@@ -505,51 +505,76 @@ alt="Avatar Resenha Máxima">
 
     {% elif aba == 'atualizacoes' and acesso_total %}
       <section class="card">
-        <span class="eyebrow gold">CHANGELOG</span>
-        <h2>📢 Notas de atualização</h2>
-        {% if nota_atualizacao %}
-          <div class="admin-log-list">
-            <article class="admin-log-item">
-              <h3>{{ nota_atualizacao.get('titulo', 'Notas de atualização') }}</h3>
-              <p><strong>Versão:</strong> {{ nota_atualizacao.get('versao', '—') }} · <strong>Data:</strong> {{ nota_atualizacao.get('data', '—') }}</p>
-              {% for secao, chave in [('🆕 Novidades','novidades'),('🔧 Correções','correcoes'),('♻️ Alterações','alteracoes'),('🐛 Problemas conhecidos','problemas_conhecidos')] %}
-                {% if nota_atualizacao.get(chave) %}
-                  <h4>{{ secao }}</h4>
-                  <ul>
-                    {% for item in nota_atualizacao.get(chave) %}<li>{{ item }}</li>{% endfor %}
-                  </ul>
-                {% endif %}
-              {% endfor %}
-              {% if nota_atualizacao.get('resumo') %}<p><strong>Resumo:</strong> {{ nota_atualizacao.get('resumo') }}</p>{% endif %}
-            </article>
-          </div>
-        {% else %}
-          <div class="empty-state">Nenhuma nota de atualização encontrada.</div>
-        {% endif %}
+        <span class="eyebrow gold">CANAL</span>
+        <h2>📢 Canal de atualizações</h2>
+        <p class="muted">Escolha onde o painel deve publicar as prévias e as notas oficiais.</p>
+        <form method="post" action="{{ url_for('definir_canal_atualizacoes') }}" class="user-create-form">
+          <label for="canal_atualizacoes_id">Canal do Discord</label>
+          <select id="canal_atualizacoes_id" name="canal_atualizacoes_id" required>
+            <option value="">Selecione um canal</option>
+            {% for canal in canais %}
+              <option value="{{ canal.id }}" {% if atualizacoes.canal_id|string == canal.id|string %}selected{% endif %}>
+                #{{ canal.nome }}
+              </option>
+            {% endfor %}
+          </select>
+          <button type="submit">💾 Salvar canal</button>
+        </form>
       </section>
 
       <section class="card">
         <span class="eyebrow">PLANEJADO</span>
         <h2>🔮 Futuras atualizações</h2>
-        <form method="post" action="{{ url_for('adicionar_futura_atualizacao') }}" class="user-create-form">
-          <label for="futura_atualizacao">Adicionar futura atualização</label>
-          <textarea id="futura_atualizacao" name="texto" maxlength="1000" required placeholder="Ex.: Adicionar verificação do Roblox no servidor de Eventos."></textarea>
-          <button type="submit">➕ Adicionar</button>
+        <p class="muted">Escreva a prévia que será publicada no Discord. Publicar novamente substitui a prévia anterior.</p>
+        <form method="post" action="{{ url_for('publicar_atualizacoes_futuras') }}" class="user-create-form">
+          <input type="hidden" name="canal_atualizacoes_id" value="{{ atualizacoes.canal_id }}">
+          <label for="texto_futuras">Próximas novidades</label>
+          <textarea id="texto_futuras" name="texto_futuras" rows="10" required placeholder="Ex.:\n- Novo sistema de...\n- Correção de...">{{ atualizacoes.futuras_texto }}</textarea>
+          <button type="submit">🔮 Publicar futuras atualizações</button>
         </form>
-        {% if futuras_atualizacoes %}
-          <ul>
-            {% for item in futuras_atualizacoes %}
-              <li style="margin-bottom:8px;">
-                {{ item }}
-                <form method="post" action="{{ url_for('remover_futura_atualizacao') }}" style="display:inline; margin-left:8px;">
-                  <input type="hidden" name="texto" value="{{ item }}">
-                  <button type="submit">🗑️</button>
-                </form>
-              </li>
+
+        {% if atualizacoes.futuras_publicadas %}
+          <div class="setup-note" style="margin-top:16px;">
+            <strong>✅ Prévia ativa no Discord</strong>
+            {% if atualizacoes.futuras_publicado_em %}
+              <p>Publicada em {{ atualizacoes.futuras_publicado_em }}</p>
+            {% endif %}
+            <form method="post" action="{{ url_for('remover_atualizacoes_futuras') }}" onsubmit="return confirm('Remover a mensagem de futuras atualizações do Discord?')">
+              <button class="danger-button" type="submit">🗑️ Remover prévia do Discord</button>
+            </form>
+          </div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <span class="eyebrow gold">LANÇAMENTO</span>
+        <h2>🚀 Lançar atualização</h2>
+        <p class="muted">Cole as notas finais. O painel publica as notas e remove automaticamente a prévia de Futuras atualizações.</p>
+        <form method="post" action="{{ url_for('lancar_atualizacao') }}" class="user-create-form">
+          <input type="hidden" name="canal_atualizacoes_id" value="{{ atualizacoes.canal_id }}">
+          <label for="texto_notas">Notas da atualização</label>
+          <textarea id="texto_notas" name="texto_notas" rows="12" required placeholder="Cole aqui a nota final da atualização..."></textarea>
+          <button type="submit">🚀 Publicar atualização</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <span class="eyebrow">HISTÓRICO</span>
+        <h2>🗂️ Últimas atualizações lançadas</h2>
+        {% if atualizacoes.historico %}
+          <div class="admin-log-list">
+            {% for item in atualizacoes.historico %}
+              <article class="admin-log-item">
+                <div class="admin-log-meta">
+                  <time>{{ item.get('data', '—') }}</time>
+                  <span>Atualização publicada</span>
+                </div>
+                <div class="admin-log-text" style="white-space:pre-wrap;">{{ item.get('texto', '') }}</div>
+              </article>
             {% endfor %}
-          </ul>
+          </div>
         {% else %}
-          <div class="empty-state">Nenhuma futura atualização cadastrada.</div>
+          <div class="empty-state">Nenhuma atualização lançada pelo painel ainda.</div>
         {% endif %}
       </section>
 
