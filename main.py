@@ -3372,6 +3372,7 @@ def contexto_painel(
         "entradas",
         "atualizacoes",
         "ia",
+        "nota_bot",
         "restrito",
     }
 
@@ -3391,6 +3392,9 @@ def contexto_painel(
         aba = "menus"
 
     if aba == "ia" and not acesso_total():
+        aba = "menus"
+
+    if aba == "nota_bot" and not acesso_total():
         aba = "menus"
 
     ids_validos = {
