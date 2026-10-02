@@ -3066,6 +3066,54 @@ def resumo_servidor_sync():
     except Exception:
         return base
 
+
+
+def membros_servidor_sync():
+    """Lista membros humanos e combina Discord + vínculo Roblox para o painel."""
+    if not bot.is_ready() or BOT_LOOP is None:
+        return []
+    vinculos = carregar_roblox_vinculos().get("vinculos", {})
+    async def _coletar():
+        guild = bot.get_guild(MAIN_DISCORD_GUILD_ID)
+        if not guild:
+            return []
+        saida = []
+        for m in guild.members:
+            if m.bot:
+                continue
+            atividades = []
+            for a in getattr(m, "activities", []) or []:
+                nome = getattr(a, "name", None)
+                if nome and nome != "Custom Status":
+                    atividades.append(str(nome))
+            v = vinculos.get(str(m.id)) or {}
+            saida.append({
+                "id": str(m.id),
+                "nome": m.display_name,
+                "usuario": str(m),
+                "avatar": str(m.display_avatar.url) if m.display_avatar else "",
+                "online": m.status != discord.Status.offline,
+                "status": str(m.status),
+                "call": m.voice.channel.name if m.voice and m.voice.channel else "",
+                "atividades": atividades[:3],
+                "cargos": [r.name for r in m.roles if r.name != "@everyone"][-6:],
+                "roblox": v,
+            })
+        return sorted(saida, key=lambda x: (not x["online"], x["nome"].casefold()))
+    try:
+        return asyncio.run_coroutine_threadsafe(_coletar(), BOT_LOOP).result(timeout=8)
+    except Exception as erro:
+        print(f"Painel: falha ao listar membros: {erro!r}")
+        return []
+
+
+@app.get("/api/roblox/vinculos")
+def api_roblox_vinculos_lista():
+    if not _autorizado_roblox():
+        return jsonify({"ok": False, "erro": "Não autorizado."}), 401
+    dados = carregar_roblox_vinculos().get("vinculos", {})
+    return jsonify({"ok": True, "vinculos": list(dados.values())})
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -3377,6 +3425,7 @@ def contexto_painel(
     )
 
     resumo_servidor = resumo_servidor_sync() if aba in {"visao", "membros", "estatisticas", "sistemas"} else {}
+    membros_painel = membros_servidor_sync() if aba == "membros" else []
     solicitacoes_acesso = carregar_solicitacoes_acesso().get("solicitacoes", []) if aba == "acessos" and acesso_total() else []
     pendencias_acesso = sum(1 for x in carregar_solicitacoes_acesso().get("solicitacoes", []) if x.get("status") == "pendente") if acesso_total() else 0
 
@@ -3416,6 +3465,7 @@ def contexto_painel(
         "ia_config": ia_config,
         "usuarios_painel": usuarios,
         "resumo_servidor": resumo_servidor,
+        "membros_painel": membros_painel,
         "solicitacoes_acesso": solicitacoes_acesso,
         "pendencias_acesso": pendencias_acesso,
         "cargo_eventos_configurado": bool(
@@ -3432,7 +3482,7 @@ def _injetar_links_extras_no_painel(response):
     """Adiciona Estruturas e IDs do Discord ao menu principal sem trocar index.html."""
     try:
         if (
-            request.endpoint == "painel"
+            False and request.endpoint == "painel"
             and acesso_total()
             and response.content_type
             and "text/html" in response.content_type

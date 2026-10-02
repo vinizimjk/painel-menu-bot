@@ -57,7 +57,6 @@ alt="Logo Resenha Máxima">
       <div class="side-label">BOT E INTEGRAÇÕES</div>
       <a class="side-link {% if aba=='ia' %}active{% endif %}" href="{{ url_for('painel', aba='ia') }}">🤖 <span>IA do Bot</span></a>
       <a class="side-link {% if aba=='menus' %}active{% endif %}" href="{{ url_for('painel', aba='menus') }}">🎛️ <span>Menus Discord</span></a>
-      <a class="side-link {% if aba=='modelos' %}active{% endif %}" href="{{ url_for('painel', aba='modelos') }}">💬 <span>Mensagens do Bot</span></a>
       <a class="side-link {% if aba=='sistemas' %}active{% endif %}" href="{{ url_for('painel', aba='sistemas') }}">🩺 <span>Saúde dos Sistemas</span></a>
       <div class="side-user"><b>{{ discord_nome or usuario_logado }}</b><small>{{ nivel }}</small><a href="{{ url_for('sair') }}">Sair</a></div>
     </aside>
@@ -83,11 +82,17 @@ alt="Logo Resenha Máxima">
       <div class="dash-grid"><section class="card"><h2>🔊 Servidor agora</h2>{% for call in resumo_servidor.calls %}<div class="activity-row"><b>{{ call.nome }}</b><span>{{ call.pessoas|length }} pessoa(s)</span><small>{{ call.pessoas|join(', ') }}</small></div>{% else %}<p>Nenhuma call com membros agora.</p>{% endfor %}</section><section class="card"><h2>🎮 Atividades agora</h2>{% for a in resumo_servidor.atividades %}<div class="activity-row"><b>{{ a.nome }}</b><span>{{ a.quantidade }}</span></div>{% else %}<p>Nenhuma atividade pública detectada.</p>{% endfor %}</section></div>
       <section class="card"><h2>⚡ Ações rápidas</h2><div class="quick-actions"><a href="{{ url_for('painel', aba='membros') }}">👤 Procurar membro</a><a href="{{ url_for('painel', aba='central') }}">🛡️ Solicitações</a><a href="{{ url_for('painel', aba='menus') }}">📢 Menus</a><a href="{{ url_for('painel', aba='ia') }}">🤖 Configurar IA</a></div></section>
     {% elif aba == 'membros' %}
-      <section class="card"><span class="eyebrow gold">MEMBROS</span><h1>Perfis e atividade</h1><p>{{ resumo_servidor.membros or 0 }} membros humanos registrados no servidor. A pesquisa completa usa a base sincronizada pelo bot; bots são ignorados nas estatísticas.</p><div class="metric-grid compact"><div class="metric"><span>Online</span><b>{{ resumo_servidor.online or 0 }}</b></div><div class="metric"><span>Em call</span><b>{{ resumo_servidor.em_call or 0 }}</b></div></div></section>
+      <section class="card"><span class="eyebrow gold">MEMBROS</span><h1>Perfis e atividade</h1><p>{{ resumo_servidor.membros or 0 }} membros humanos. Bots são ignorados.</p><div class="metric-grid compact"><div class="metric"><span>Online</span><b>{{ resumo_servidor.online or 0 }}</b></div><div class="metric"><span>Em call</span><b>{{ resumo_servidor.em_call or 0 }}</b></div></div><input id="memberSearch" class="member-search" placeholder="🔎 Pesquisar nome, Discord ID, Roblox ou Roblox ID..." oninput="filtrarMembros()"></section>
+      <section class="member-list" id="memberList">{% for m in membros_painel %}<article class="member-card" data-search="{{ (m.nome ~ ' ' ~ m.usuario ~ ' ' ~ m.id ~ ' ' ~ (m.roblox.username or '') ~ ' ' ~ (m.roblox.roblox_id or ''))|lower }}"><img src="{{ m.avatar }}" alt=""><div class="member-main"><h3>{{ m.nome }} {% if m.online %}<span class="dot-online">●</span>{% endif %}</h3><small>@{{ m.usuario }} • {{ m.id }}</small>{% if m.call %}<p>🔊 {{ m.call }}</p>{% endif %}{% if m.atividades %}<p>🎮 {{ m.atividades|join(' • ') }}</p>{% endif %}{% if m.roblox %}<div class="roblox-wallet"><img src="{{ m.roblox.picture }}" alt="Avatar Roblox"><div><b>🎮 Roblox vinculado</b><span>{{ m.roblox.display_name or m.roblox.username }} (@{{ m.roblox.username }})</span><small>ID Roblox: {{ m.roblox.roblox_id }}</small></div></div>{% endif %}</div></article>{% else %}<section class="card"><p>Não foi possível carregar os membros agora.</p></section>{% endfor %}</section>
+      <script>function filtrarMembros(){const q=document.getElementById('memberSearch').value.toLowerCase();document.querySelectorAll('.member-card').forEach(x=>x.style.display=x.dataset.search.includes(q)?'flex':'none')}</script>
     {% elif aba == 'estatisticas' %}
-      <section class="card"><span class="eyebrow gold">ESTATÍSTICAS</span><h1>Atividade da comunidade</h1><p>Central preparada para rankings de chat, call, canais, horários de pico, figurinhas e atividades. Os dados ao vivo disponíveis aparecem abaixo.</p>{% for a in resumo_servidor.atividades %}<div class="activity-row"><b>{{ a.nome }}</b><span>{{ a.quantidade }} ativo(s)</span></div>{% endfor %}</section>
+      <section class="card"><span class="eyebrow gold">ESTATÍSTICAS</span><h1>Atividade da comunidade</h1><div class="metric-grid"><div class="metric"><span>👥 Membros</span><b>{{ resumo_servidor.membros or 0 }}</b></div><div class="metric"><span>🟢 Online</span><b>{{ resumo_servidor.online or 0 }}</b></div><div class="metric"><span>🔊 Em call agora</span><b>{{ resumo_servidor.em_call or 0 }}</b></div><div class="metric"><span>💬 Canais</span><b>{{ resumo_servidor.canais_texto or 0 }}</b></div></div></section><div class="dash-grid"><section class="card"><h2>🔊 Calls ativas</h2>{% for c in resumo_servidor.calls %}<div class="activity-row"><b>{{ c.nome }}</b><span>{{ c.pessoas|length }}</span><small>{{ c.pessoas|join(', ') }}</small></div>{% else %}<p>Sem call ativa.</p>{% endfor %}</section><section class="card"><h2>🎮 Atividades agora</h2>{% for a in resumo_servidor.atividades %}<div class="activity-row"><b>{{ a.nome }}</b><span>{{ a.quantidade }}</span></div>{% else %}<p>Sem atividade pública detectada.</p>{% endfor %}</section></div><section class="card"><p class="muted">Rankings históricos de mensagens/call começam a aparecer conforme o bot acumula dados reais. Nenhum número é inventado para preencher a tela.</p></section>
     {% elif aba == 'moderacao' %}
-      <section class="card"><span class="eyebrow gold">MODERAÇÃO</span><h1>Membros que precisam de atenção</h1><p>Esta área usa ocorrências objetivas — avisos, mutes, AutoMod e solicitações — para ajudar a equipe a revisar casos. O painel não decide bans automaticamente.</p><a class="action-link" href="{{ url_for('painel', aba='central') }}">Abrir Central Administrativa →</a></section>
+      <section class="card"><span class="eyebrow gold">MODERAÇÃO</span><h1>Triagem da equipe</h1><p>Ocorrências objetivas, solicitações e histórico administrativo ficam centralizados aqui. O painel não decide punições automaticamente.</p><div class="quick-actions"><a href="{{ url_for('painel', aba='central') }}">📥 Abrir solicitações e histórico</a><a href="{{ url_for('painel', aba='membros') }}">👤 Pesquisar membro</a></div></section>
+    {% elif aba == 'entradas' %}
+      <section class="card"><span class="eyebrow gold">ENTRADAS / SAÍDAS</span><h1>Movimentação do servidor</h1><p>Histórico registrado pelo bot. As notificações deixam de depender da DM do dono.</p></section><section class="card"><h2>🚪 Histórico recente</h2>{% for e in entradas[:100] %}<div class="activity-row"><b>{{ e.membro_nome or e.usuario_nome or e.nome or 'Membro' }}</b><span>{{ e.data or e.criado_em or '' }}</span><small>{{ e.origem or e.tipo or 'entrada' }}{% if e.convidador_nome %} • convite de {{ e.convidador_nome }}{% endif %}</small></div>{% else %}<p>Ainda não há registros disponíveis.</p>{% endfor %}</section>
+    {% elif aba == 'ia' %}
+      <section class="card"><span class="eyebrow gold">IA DO BOT</span><h1>Comportamento da Resenha Máxima</h1><p>Configurações principais da IA. O bot usa contexto recente, atividades públicas e evita prolongar conversas encerradas.</p><form method="post" action="{{ url_for('salvar_configuracao_ia') }}" class="user-create-form"><label><input type="checkbox" name="ia_ativa" {% if ia_config.ativa %}checked{% endif %}> IA ativa</label><label><input type="checkbox" name="ia_caos_ativo" {% if ia_config.caos_ativo %}checked{% endif %}> Resenha espontânea ativa</label><label>Chance contextual<input name="ia_caos_chance" value="{{ ia_config.caos_chance }}"></label><label>Cooldown de call (min)<input name="ia_call_cooldown_minutos" value="{{ ia_config.call_cooldown_minutos }}"></label><button type="submit">Salvar IA</button></form></section>
     {% elif aba == 'acessos' %}
       <section class="card"><span class="eyebrow gold">ACESSOS</span><h1>Solicitações do painel</h1>{% for x in solicitacoes_acesso|reverse %}<div class="request-card"><div><b>{{ x.discord_nome }}</b><small>@{{ x.discord_usuario }} • ID {{ x.discord_id }}</small><span>Usuário solicitado: {{ x.usuario }}</span></div><strong class="status-{{ x.status }}">{{ x.status }}</strong>{% if x.status == 'pendente' %}<div class="request-actions"><form method="post" action="{{ url_for('decidir_acesso', solicitacao_id=x.id, acao='aprovar') }}"><button>✅ Aprovar</button></form><form method="post" action="{{ url_for('decidir_acesso', solicitacao_id=x.id, acao='recusar') }}"><button class="danger">❌ Recusar</button></form></div>{% endif %}</div>{% else %}<p>Nenhuma solicitação ainda.</p>{% endfor %}</section>
     {% elif aba == 'sistemas' %}
@@ -503,54 +508,9 @@ alt="Avatar Resenha Máxima">
       {% endif %}
 
     {% elif aba == 'atualizacoes' and acesso_total %}
-      <section class="card">
-        <span class="eyebrow gold">CHANGELOG</span>
-        <h2>📢 Atualizações</h2>
-        <p>Publique as próximas mudanças e mantenha o histórico das versões lançadas.</p>
-
-        <form method="post" action="{{ url_for('publicar_atualizacoes_futuras') }}" class="user-create-form">
-          <label for="texto_futuras">🔮 Futuras atualizações</label>
-          <textarea id="texto_futuras" name="texto_futuras" maxlength="8000" required placeholder="Escreva aqui o que está planejado...">{{ atualizacoes.get('futuras_texto', '') }}</textarea>
-          <input type="hidden" name="canal_atualizacoes_id" value="{{ atualizacoes.get('canal_id', '') }}">
-          <button type="submit">📤 Publicar / atualizar no Discord</button>
-        </form>
-
-        {% if atualizacoes.get('futuras_publicadas') %}
-          <form method="post" action="{{ url_for('remover_atualizacoes_futuras') }}" style="margin-top:10px;">
-            <button type="submit" class="danger-button">🗑️ Remover futuras atualizações do Discord</button>
-          </form>
-          <p class="muted">Última publicação: {{ atualizacoes.get('futuras_publicado_em', '—') }}</p>
-        {% endif %}
-      </section>
-
-      <section class="card">
-        <span class="eyebrow">LANÇAMENTO</span>
-        <h2>🚀 Lançar atualização</h2>
-        <form method="post" action="{{ url_for('lancar_atualizacao') }}" class="user-create-form">
-          <label for="texto_notas">Notas da atualização</label>
-          <textarea id="texto_notas" name="texto_notas" maxlength="12000" required placeholder="Cole aqui as notas da versão que será lançada."></textarea>
-          <input type="hidden" name="canal_atualizacoes_id" value="{{ atualizacoes.get('canal_id', '') }}">
-          <button type="submit">🚀 Lançar atualização</button>
-        </form>
-      </section>
-
-      <section class="card">
-        <span class="eyebrow">HISTÓRICO</span>
-        <h2>📚 Atualizações anteriores</h2>
-        {% if atualizacoes.get('historico') %}
-          <div class="admin-log-list">
-            {% for item in atualizacoes.get('historico', [])|reverse %}
-              <article class="admin-log-item">
-                <p>{{ item.get('texto', item.get('notas', 'Atualização registrada')) }}</p>
-                {% if item.get('publicado_em') %}<small>{{ item.get('publicado_em') }}</small>{% endif %}
-              </article>
-            {% endfor %}
-          </div>
-        {% else %}
-          <div class="empty-state">Nenhuma atualização lançada no histórico.</div>
-        {% endif %}
-      </section>
-
+      <section class="card"><span class="eyebrow gold">ATUALIZAÇÕES</span><h1>Publicações do projeto</h1><p>Publique prévias e notas sem quebrar o histórico.</p></section>
+      <div class="dash-grid"><section class="card"><h2>🔮 Futuras atualizações</h2><form method="post" action="{{ url_for('publicar_atualizacoes_futuras') }}"><label>Canal<input name="canal_atualizacoes_id" value="{{ atualizacoes.canal_id }}" placeholder="ID do canal"></label><label>Texto<textarea name="texto_futuras" rows="12" required>{{ atualizacoes.futuras_texto }}</textarea></label><button type="submit">Publicar / substituir prévia</button></form>{% if atualizacoes.futuras_publicadas %}<form method="post" action="{{ url_for('remover_atualizacoes_futuras') }}"><button class="danger" type="submit">Remover prévia do Discord</button></form>{% endif %}</section><section class="card"><h2>📢 Lançar atualização</h2><form method="post" action="{{ url_for('lancar_atualizacao') }}"><label>Notas<textarea name="texto_notas" rows="12" required placeholder="Escreva as notas da versão..."></textarea></label><label>Canal<input name="canal_atualizacoes_id" value="{{ atualizacoes.canal_id }}"></label><button type="submit">Lançar atualização</button></form></section></div>
+      <section class="card"><h2>📜 Histórico</h2>{% for h in atualizacoes.historico %}<div class="update-history-item"><time>{{ h.publicado_em or h.data or '' }}</time><div>{{ h.texto or h.notas or h }}</div></div>{% else %}<p>Nenhuma atualização lançada ainda.</p>{% endfor %}</section>
     {% elif aba == 'central' and acesso_total %}
       <div class="admin-grid">
         <section class="card">
