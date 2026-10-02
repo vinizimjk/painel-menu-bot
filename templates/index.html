@@ -505,50 +505,49 @@ alt="Avatar Resenha Máxima">
     {% elif aba == 'atualizacoes' and acesso_total %}
       <section class="card">
         <span class="eyebrow gold">CHANGELOG</span>
-        <h2>📢 Notas de atualização</h2>
-        {% if nota_atualizacao %}
-          <div class="admin-log-list">
-            <article class="admin-log-item">
-              <h3>{{ nota_atualizacao.get('titulo', 'Notas de atualização') }}</h3>
-              <p><strong>Versão:</strong> {{ nota_atualizacao.get('versao', '—') }} · <strong>Data:</strong> {{ nota_atualizacao.get('data', '—') }}</p>
-              {% for secao, chave in [('🆕 Novidades','novidades'),('🔧 Correções','correcoes'),('♻️ Alterações','alteracoes'),('🐛 Problemas conhecidos','problemas_conhecidos')] %}
-                {% if nota_atualizacao.get(chave) %}
-                  <h4>{{ secao }}</h4>
-                  <ul>
-                    {% for item in nota_atualizacao.get(chave) %}<li>{{ item }}</li>{% endfor %}
-                  </ul>
-                {% endif %}
-              {% endfor %}
-              {% if nota_atualizacao.get('resumo') %}<p><strong>Resumo:</strong> {{ nota_atualizacao.get('resumo') }}</p>{% endif %}
-            </article>
-          </div>
-        {% else %}
-          <div class="empty-state">Nenhuma nota de atualização encontrada.</div>
+        <h2>📢 Atualizações</h2>
+        <p>Publique as próximas mudanças e mantenha o histórico das versões lançadas.</p>
+
+        <form method="post" action="{{ url_for('publicar_atualizacoes_futuras') }}" class="user-create-form">
+          <label for="texto_futuras">🔮 Futuras atualizações</label>
+          <textarea id="texto_futuras" name="texto_futuras" maxlength="8000" required placeholder="Escreva aqui o que está planejado...">{{ atualizacoes.get('futuras_texto', '') }}</textarea>
+          <input type="hidden" name="canal_atualizacoes_id" value="{{ atualizacoes.get('canal_id', '') }}">
+          <button type="submit">📤 Publicar / atualizar no Discord</button>
+        </form>
+
+        {% if atualizacoes.get('futuras_publicadas') %}
+          <form method="post" action="{{ url_for('remover_atualizacoes_futuras') }}" style="margin-top:10px;">
+            <button type="submit" class="danger-button">🗑️ Remover futuras atualizações do Discord</button>
+          </form>
+          <p class="muted">Última publicação: {{ atualizacoes.get('futuras_publicado_em', '—') }}</p>
         {% endif %}
       </section>
 
       <section class="card">
-        <span class="eyebrow">PLANEJADO</span>
-        <h2>🔮 Futuras atualizações</h2>
-        <form method="post" action="{{ url_for('adicionar_futura_atualizacao') }}" class="user-create-form">
-          <label for="futura_atualizacao">Adicionar futura atualização</label>
-          <textarea id="futura_atualizacao" name="texto" maxlength="1000" required placeholder="Ex.: Adicionar verificação do Roblox no servidor de Eventos."></textarea>
-          <button type="submit">➕ Adicionar</button>
+        <span class="eyebrow">LANÇAMENTO</span>
+        <h2>🚀 Lançar atualização</h2>
+        <form method="post" action="{{ url_for('lancar_atualizacao') }}" class="user-create-form">
+          <label for="texto_notas">Notas da atualização</label>
+          <textarea id="texto_notas" name="texto_notas" maxlength="12000" required placeholder="Cole aqui as notas da versão que será lançada."></textarea>
+          <input type="hidden" name="canal_atualizacoes_id" value="{{ atualizacoes.get('canal_id', '') }}">
+          <button type="submit">🚀 Lançar atualização</button>
         </form>
-        {% if futuras_atualizacoes %}
-          <ul>
-            {% for item in futuras_atualizacoes %}
-              <li style="margin-bottom:8px;">
-                {{ item }}
-                <form method="post" action="{{ url_for('remover_futura_atualizacao') }}" style="display:inline; margin-left:8px;">
-                  <input type="hidden" name="texto" value="{{ item }}">
-                  <button type="submit">🗑️</button>
-                </form>
-              </li>
+      </section>
+
+      <section class="card">
+        <span class="eyebrow">HISTÓRICO</span>
+        <h2>📚 Atualizações anteriores</h2>
+        {% if atualizacoes.get('historico') %}
+          <div class="admin-log-list">
+            {% for item in atualizacoes.get('historico', [])|reverse %}
+              <article class="admin-log-item">
+                <p>{{ item.get('texto', item.get('notas', 'Atualização registrada')) }}</p>
+                {% if item.get('publicado_em') %}<small>{{ item.get('publicado_em') }}</small>{% endif %}
+              </article>
             {% endfor %}
-          </ul>
+          </div>
         {% else %}
-          <div class="empty-state">Nenhuma futura atualização cadastrada.</div>
+          <div class="empty-state">Nenhuma atualização lançada no histórico.</div>
         {% endif %}
       </section>
 
