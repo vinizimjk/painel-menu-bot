@@ -1758,6 +1758,9 @@ IA_CONFIG_PADRAO = {
     "caos_intervalo_minutos": 120,
     "caos_chance": 0.12,
     "call_cooldown_minutos": 10,
+    "bot_nota": "",
+    "bot_nota_ate": 0,
+    "bot_nota_manual": False,
 }
 
 
@@ -4495,6 +4498,33 @@ def salvar_configuracao_ia():
     flash("🤖 Configuração da IA salva. O bot consulta o painel automaticamente.")
     return redirect(url_for("painel", aba="ia"))
 
+
+@app.route("/bot/nota", methods=["POST"])
+@somente_full
+def salvar_nota_bot():
+    import time
+    texto = (request.form.get("bot_nota") or "").strip()[:120]
+    duracao = (request.form.get("bot_nota_duracao") or "manual").strip()
+    config = carregar_config_ia()
+    if not texto:
+        config.update({"bot_nota": "", "bot_nota_ate": 0, "bot_nota_manual": False})
+        salvar_config_ia(config)
+        flash("Nota do bot removida. O espelhamento automático voltou a ficar ativo.")
+        return redirect(url_for("painel", aba="nota_bot"))
+    segundos = {"30m":1800,"1h":3600,"3h":10800,"6h":21600,"12h":43200,"24h":86400}.get(duracao, 0)
+    config.update({"bot_nota": texto, "bot_nota_ate": (int(time.time()) + segundos) if segundos else 0, "bot_nota_manual": True})
+    salvar_config_ia(config)
+    flash("Nota do bot aplicada.")
+    return redirect(url_for("painel", aba="nota_bot"))
+
+@app.route("/bot/nota/remover", methods=["POST"])
+@somente_full
+def remover_nota_bot():
+    config = carregar_config_ia()
+    config.update({"bot_nota": "", "bot_nota_ate": 0, "bot_nota_manual": False})
+    salvar_config_ia(config)
+    flash("Nota do bot removida.")
+    return redirect(url_for("painel", aba="nota_bot"))
 
 @app.route("/api/ia-config")
 def api_ia_config():

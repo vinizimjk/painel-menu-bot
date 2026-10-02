@@ -971,3 +971,7 @@ body{padding-left:250px;background:#0c0d10}.topbar{display:none}.rm-sidebar{posi
 
 /* V36 perfis e páginas úteis */
 .member-search{width:100%;margin-top:16px;background:#0e1015;border:1px solid #30333d;color:#fff;padding:13px 15px;border-radius:10px}.member-list{display:grid;gap:12px;margin-top:14px}.member-card{display:flex;gap:14px;background:#14161b;border:1px solid #292c34;border-radius:14px;padding:16px}.member-card>img{width:58px;height:58px;border-radius:50%;object-fit:cover}.member-main{flex:1}.member-main h3{margin:0 0 4px}.member-main p{margin:7px 0}.dot-online{color:#55df8a;font-size:12px}.roblox-wallet{margin-top:12px;display:flex;gap:12px;align-items:center;background:linear-gradient(135deg,#1a1d25,#101217);border:1px solid #333744;border-radius:12px;padding:10px}.roblox-wallet img{width:70px;height:70px;border-radius:10px;object-fit:cover;background:#222}.roblox-wallet span,.roblox-wallet small{display:block;margin-top:3px;color:#aeb3bf}.muted{color:#8e939f}.compact{grid-template-columns:repeat(2,minmax(120px,220px))}
+/* V37 — painel mais sóbrio */
+.rm-sidebar .side-link { gap: 8px; }
+.rm-sidebar .side-link span { letter-spacing: .01em; }
+.metric span, .card h2 { letter-spacing: .01em; }
