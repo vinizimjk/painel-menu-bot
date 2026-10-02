@@ -41,44 +41,26 @@ src="{{ url_for('static', filename='logo_resenha_maxima.png') }}"
 alt="Logo Resenha Máxima">
     </section>
 
-    <nav class="panel-tabs">
-      <a
-        class="panel-tab {% if aba == 'menus' %}active{% endif %}"
-        href="{{ url_for('painel', aba='menus', canal=canal_id) }}"
-      >
-        🎛️ Menus
-      </a>
-
-      {% if acesso_total %}
-      <a
-        class="panel-tab {% if aba == 'modelos' %}active{% endif %}"
-        href="{{ url_for('painel', aba='modelos') }}"
-      >
-        💬 Mensagens do Bot
-      </a>
-
-      <a
-        class="panel-tab {% if aba == 'central' %}active{% endif %}"
-        href="{{ url_for('painel', aba='central') }}"
-      >
-        🛡️ Central Administrativa
-      </a>
-
-      <a
-        class="panel-tab {% if aba == 'servidores' %}active{% endif %}"
-        href="{{ url_for('painel', aba='servidores') }}"
-      >
-        🏢 Servidores
-      </a>
-
-      <a
-        class="panel-tab {% if aba == 'atualizacoes' %}active{% endif %}"
-        href="{{ url_for('painel', aba='atualizacoes') }}"
-      >
-        📢 Atualizações
-      </a>
-      {% endif %}
-    </nav>
+    <button class="sidebar-toggle" onclick="document.body.classList.toggle('sidebar-open')">☰</button>
+    <aside class="rm-sidebar">
+      <div class="side-brand"><img src="{{ url_for('static', filename='logo_resenha_maxima.png') }}"><div><b>RESENHA MÁXIMA</b><small>Painel</small></div></div>
+      <a class="side-link {% if aba=='visao' %}active{% endif %}" href="{{ url_for('painel', aba='visao') }}">🏠 <span>Visão Geral</span></a>
+      <div class="side-label">SERVIDOR</div>
+      <a class="side-link {% if aba=='membros' %}active{% endif %}" href="{{ url_for('painel', aba='membros') }}">👥 <span>Membros</span></a>
+      <a class="side-link {% if aba=='estatisticas' %}active{% endif %}" href="{{ url_for('painel', aba='estatisticas') }}">📊 <span>Estatísticas</span></a>
+      <a class="side-link {% if aba=='moderacao' %}active{% endif %}" href="{{ url_for('painel', aba='moderacao') }}">🛡️ <span>Moderação</span></a>
+      <a class="side-link {% if aba=='entradas' %}active{% endif %}" href="{{ url_for('painel', aba='entradas') }}">🚪 <span>Entradas / Saídas</span></a>
+      <div class="side-label">GERENCIAMENTO</div>
+      <a class="side-link {% if aba=='acessos' %}active{% endif %}" href="{{ url_for('painel', aba='acessos') }}">🔐 <span>Acessos {% if pendencias_acesso %}<b class="side-count">{{ pendencias_acesso }}</b>{% endif %}</span></a>
+      <a class="side-link {% if aba=='central' %}active{% endif %}" href="{{ url_for('painel', aba='central') }}">📥 <span>Central Administrativa</span></a>
+      <a class="side-link {% if aba=='atualizacoes' %}active{% endif %}" href="{{ url_for('painel', aba='atualizacoes') }}">📢 <span>Atualizações</span></a>
+      <div class="side-label">BOT E INTEGRAÇÕES</div>
+      <a class="side-link {% if aba=='ia' %}active{% endif %}" href="{{ url_for('painel', aba='ia') }}">🤖 <span>IA do Bot</span></a>
+      <a class="side-link {% if aba=='menus' %}active{% endif %}" href="{{ url_for('painel', aba='menus') }}">🎛️ <span>Menus Discord</span></a>
+      <a class="side-link {% if aba=='modelos' %}active{% endif %}" href="{{ url_for('painel', aba='modelos') }}">💬 <span>Mensagens do Bot</span></a>
+      <a class="side-link {% if aba=='sistemas' %}active{% endif %}" href="{{ url_for('painel', aba='sistemas') }}">🩺 <span>Saúde dos Sistemas</span></a>
+      <div class="side-user"><b>{{ discord_nome or usuario_logado }}</b><small>{{ nivel }}</small><a href="{{ url_for('sair') }}">Sair</a></div>
+    </aside>
 
     {% if nivel == 'eventos' %}
       <div class="permission-banner">
@@ -93,7 +75,24 @@ alt="Logo Resenha Máxima">
       {% endfor %}
     {% endwith %}
 
-    {% if aba == 'menus' %}
+    {% if aba == 'visao' %}
+      <section class="dash-head"><div><span class="eyebrow gold">CENTRAL DE COMANDO</span><h1>Visão Geral</h1><p>O que está acontecendo na Resenha Máxima agora.</p></div><span class="live-pill">● AO VIVO</span></section>
+      <div class="metric-grid">
+        <div class="metric"><span>👥 Membros</span><b>{{ resumo_servidor.membros or 0 }}</b></div><div class="metric"><span>🟢 Online</span><b>{{ resumo_servidor.online or 0 }}</b></div><div class="metric"><span>🔊 Em call</span><b>{{ resumo_servidor.em_call or 0 }}</b></div><div class="metric"><span>🔐 Acessos pendentes</span><b>{{ pendencias_acesso }}</b></div>
+      </div>
+      <div class="dash-grid"><section class="card"><h2>🔊 Servidor agora</h2>{% for call in resumo_servidor.calls %}<div class="activity-row"><b>{{ call.nome }}</b><span>{{ call.pessoas|length }} pessoa(s)</span><small>{{ call.pessoas|join(', ') }}</small></div>{% else %}<p>Nenhuma call com membros agora.</p>{% endfor %}</section><section class="card"><h2>🎮 Atividades agora</h2>{% for a in resumo_servidor.atividades %}<div class="activity-row"><b>{{ a.nome }}</b><span>{{ a.quantidade }}</span></div>{% else %}<p>Nenhuma atividade pública detectada.</p>{% endfor %}</section></div>
+      <section class="card"><h2>⚡ Ações rápidas</h2><div class="quick-actions"><a href="{{ url_for('painel', aba='membros') }}">👤 Procurar membro</a><a href="{{ url_for('painel', aba='central') }}">🛡️ Solicitações</a><a href="{{ url_for('painel', aba='menus') }}">📢 Menus</a><a href="{{ url_for('painel', aba='ia') }}">🤖 Configurar IA</a></div></section>
+    {% elif aba == 'membros' %}
+      <section class="card"><span class="eyebrow gold">MEMBROS</span><h1>Perfis e atividade</h1><p>{{ resumo_servidor.membros or 0 }} membros humanos registrados no servidor. A pesquisa completa usa a base sincronizada pelo bot; bots são ignorados nas estatísticas.</p><div class="metric-grid compact"><div class="metric"><span>Online</span><b>{{ resumo_servidor.online or 0 }}</b></div><div class="metric"><span>Em call</span><b>{{ resumo_servidor.em_call or 0 }}</b></div></div></section>
+    {% elif aba == 'estatisticas' %}
+      <section class="card"><span class="eyebrow gold">ESTATÍSTICAS</span><h1>Atividade da comunidade</h1><p>Central preparada para rankings de chat, call, canais, horários de pico, figurinhas e atividades. Os dados ao vivo disponíveis aparecem abaixo.</p>{% for a in resumo_servidor.atividades %}<div class="activity-row"><b>{{ a.nome }}</b><span>{{ a.quantidade }} ativo(s)</span></div>{% endfor %}</section>
+    {% elif aba == 'moderacao' %}
+      <section class="card"><span class="eyebrow gold">MODERAÇÃO</span><h1>Membros que precisam de atenção</h1><p>Esta área usa ocorrências objetivas — avisos, mutes, AutoMod e solicitações — para ajudar a equipe a revisar casos. O painel não decide bans automaticamente.</p><a class="action-link" href="{{ url_for('painel', aba='central') }}">Abrir Central Administrativa →</a></section>
+    {% elif aba == 'acessos' %}
+      <section class="card"><span class="eyebrow gold">ACESSOS</span><h1>Solicitações do painel</h1>{% for x in solicitacoes_acesso|reverse %}<div class="request-card"><div><b>{{ x.discord_nome }}</b><small>@{{ x.discord_usuario }} • ID {{ x.discord_id }}</small><span>Usuário solicitado: {{ x.usuario }}</span></div><strong class="status-{{ x.status }}">{{ x.status }}</strong>{% if x.status == 'pendente' %}<div class="request-actions"><form method="post" action="{{ url_for('decidir_acesso', solicitacao_id=x.id, acao='aprovar') }}"><button>✅ Aprovar</button></form><form method="post" action="{{ url_for('decidir_acesso', solicitacao_id=x.id, acao='recusar') }}"><button class="danger">❌ Recusar</button></form></div>{% endif %}</div>{% else %}<p>Nenhuma solicitação ainda.</p>{% endfor %}</section>
+    {% elif aba == 'sistemas' %}
+      <section class="card"><span class="eyebrow gold">SAÚDE DOS SISTEMAS</span><h1>Status</h1><div class="system-row"><b>Bot Discord</b><span class="{% if resumo_servidor.bot_online %}ok{% else %}bad{% endif %}">{% if resumo_servidor.bot_online %}● Online{% else %}● Offline{% endif %}</span></div><div class="system-row"><b>Site</b><span class="ok">● Online</span></div><div class="system-row"><b>Discord principal</b><span>{{ resumo_servidor.membros or 0 }} membros</span></div></section>
+    {% elif aba == 'menus' %}
       <section class="channel-toolbar card">
         <div class="channel-copy">
           <span class="eyebrow">CANAL DO DISCORD</span>
@@ -505,76 +504,51 @@ alt="Avatar Resenha Máxima">
 
     {% elif aba == 'atualizacoes' and acesso_total %}
       <section class="card">
-        <span class="eyebrow gold">CANAL</span>
-        <h2>📢 Canal de atualizações</h2>
-        <p class="muted">Escolha onde o painel deve publicar as prévias e as notas oficiais.</p>
-        <form method="post" action="{{ url_for('definir_canal_atualizacoes') }}" class="user-create-form">
-          <label for="canal_atualizacoes_id">Canal do Discord</label>
-          <select id="canal_atualizacoes_id" name="canal_atualizacoes_id" required>
-            <option value="">Selecione um canal</option>
-            {% for canal in canais %}
-              <option value="{{ canal.id }}" {% if atualizacoes.canal_id|string == canal.id|string %}selected{% endif %}>
-                #{{ canal.nome }}
-              </option>
-            {% endfor %}
-          </select>
-          <button type="submit">💾 Salvar canal</button>
-        </form>
+        <span class="eyebrow gold">CHANGELOG</span>
+        <h2>📢 Notas de atualização</h2>
+        {% if nota_atualizacao %}
+          <div class="admin-log-list">
+            <article class="admin-log-item">
+              <h3>{{ nota_atualizacao.get('titulo', 'Notas de atualização') }}</h3>
+              <p><strong>Versão:</strong> {{ nota_atualizacao.get('versao', '—') }} · <strong>Data:</strong> {{ nota_atualizacao.get('data', '—') }}</p>
+              {% for secao, chave in [('🆕 Novidades','novidades'),('🔧 Correções','correcoes'),('♻️ Alterações','alteracoes'),('🐛 Problemas conhecidos','problemas_conhecidos')] %}
+                {% if nota_atualizacao.get(chave) %}
+                  <h4>{{ secao }}</h4>
+                  <ul>
+                    {% for item in nota_atualizacao.get(chave) %}<li>{{ item }}</li>{% endfor %}
+                  </ul>
+                {% endif %}
+              {% endfor %}
+              {% if nota_atualizacao.get('resumo') %}<p><strong>Resumo:</strong> {{ nota_atualizacao.get('resumo') }}</p>{% endif %}
+            </article>
+          </div>
+        {% else %}
+          <div class="empty-state">Nenhuma nota de atualização encontrada.</div>
+        {% endif %}
       </section>
 
       <section class="card">
         <span class="eyebrow">PLANEJADO</span>
         <h2>🔮 Futuras atualizações</h2>
-        <p class="muted">Escreva a prévia que será publicada no Discord. Publicar novamente substitui a prévia anterior.</p>
-        <form method="post" action="{{ url_for('publicar_atualizacoes_futuras') }}" class="user-create-form">
-          <input type="hidden" name="canal_atualizacoes_id" value="{{ atualizacoes.canal_id }}">
-          <label for="texto_futuras">Próximas novidades</label>
-          <textarea id="texto_futuras" name="texto_futuras" rows="10" required placeholder="Ex.:\n- Novo sistema de...\n- Correção de...">{{ atualizacoes.futuras_texto }}</textarea>
-          <button type="submit">🔮 Publicar futuras atualizações</button>
+        <form method="post" action="{{ url_for('adicionar_futura_atualizacao') }}" class="user-create-form">
+          <label for="futura_atualizacao">Adicionar futura atualização</label>
+          <textarea id="futura_atualizacao" name="texto" maxlength="1000" required placeholder="Ex.: Adicionar verificação do Roblox no servidor de Eventos."></textarea>
+          <button type="submit">➕ Adicionar</button>
         </form>
-
-        {% if atualizacoes.futuras_publicadas %}
-          <div class="setup-note" style="margin-top:16px;">
-            <strong>✅ Prévia ativa no Discord</strong>
-            {% if atualizacoes.futuras_publicado_em %}
-              <p>Publicada em {{ atualizacoes.futuras_publicado_em }}</p>
-            {% endif %}
-            <form method="post" action="{{ url_for('remover_atualizacoes_futuras') }}" onsubmit="return confirm('Remover a mensagem de futuras atualizações do Discord?')">
-              <button class="danger-button" type="submit">🗑️ Remover prévia do Discord</button>
-            </form>
-          </div>
-        {% endif %}
-      </section>
-
-      <section class="card">
-        <span class="eyebrow gold">LANÇAMENTO</span>
-        <h2>🚀 Lançar atualização</h2>
-        <p class="muted">Cole as notas finais. O painel publica as notas e remove automaticamente a prévia de Futuras atualizações.</p>
-        <form method="post" action="{{ url_for('lancar_atualizacao') }}" class="user-create-form">
-          <input type="hidden" name="canal_atualizacoes_id" value="{{ atualizacoes.canal_id }}">
-          <label for="texto_notas">Notas da atualização</label>
-          <textarea id="texto_notas" name="texto_notas" rows="12" required placeholder="Cole aqui a nota final da atualização..."></textarea>
-          <button type="submit">🚀 Publicar atualização</button>
-        </form>
-      </section>
-
-      <section class="card">
-        <span class="eyebrow">HISTÓRICO</span>
-        <h2>🗂️ Últimas atualizações lançadas</h2>
-        {% if atualizacoes.historico %}
-          <div class="admin-log-list">
-            {% for item in atualizacoes.historico %}
-              <article class="admin-log-item">
-                <div class="admin-log-meta">
-                  <time>{{ item.get('data', '—') }}</time>
-                  <span>Atualização publicada</span>
-                </div>
-                <div class="admin-log-text" style="white-space:pre-wrap;">{{ item.get('texto', '') }}</div>
-              </article>
+        {% if futuras_atualizacoes %}
+          <ul>
+            {% for item in futuras_atualizacoes %}
+              <li style="margin-bottom:8px;">
+                {{ item }}
+                <form method="post" action="{{ url_for('remover_futura_atualizacao') }}" style="display:inline; margin-left:8px;">
+                  <input type="hidden" name="texto" value="{{ item }}">
+                  <button type="submit">🗑️</button>
+                </form>
+              </li>
             {% endfor %}
-          </div>
+          </ul>
         {% else %}
-          <div class="empty-state">Nenhuma atualização lançada pelo painel ainda.</div>
+          <div class="empty-state">Nenhuma futura atualização cadastrada.</div>
         {% endif %}
       </section>
 

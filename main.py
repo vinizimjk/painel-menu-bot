@@ -1381,6 +1381,7 @@ app = Flask(__name__)
 app.secret_key = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
 
 USERS_FILE = DATA_DIR / "panel_users.json"
+ACCESS_REQUESTS_FILE = DATA_DIR / "panel_access_requests.json"
 ADMIN_LOG_FILE = DATA_DIR / "admin_logs.json"
 ENTRADAS_FILE = DATA_DIR / "entradas.json"
 
@@ -2944,6 +2945,127 @@ def somente_full(func):
     return wrapper
 
 
+
+def carregar_solicitacoes_acesso():
+    if not ACCESS_REQUESTS_FILE.exists():
+        return {"solicitacoes": []}
+    try:
+        dados = json.loads(ACCESS_REQUESTS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(dados, dict) or not isinstance(dados.get("solicitacoes"), list):
+            return {"solicitacoes": []}
+        return dados
+    except Exception:
+        return {"solicitacoes": []}
+
+
+def salvar_solicitacoes_acesso(dados):
+    tmp = ACCESS_REQUESTS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(ACCESS_REQUESTS_FILE)
+
+
+def membro_discord_sync(discord_id):
+    if not bot.is_ready() or BOT_LOOP is None:
+        return None
+    try:
+        async def _buscar():
+            guild = bot.get_guild(MAIN_DISCORD_GUILD_ID)
+            if guild is None:
+                return None
+            membro = guild.get_member(int(discord_id))
+            if membro is None:
+                try: membro = await guild.fetch_member(int(discord_id))
+                except Exception: return None
+            return {"id": str(membro.id), "nome": membro.display_name, "usuario": str(membro)}
+        return asyncio.run_coroutine_threadsafe(_buscar(), BOT_LOOP).result(timeout=8)
+    except Exception:
+        return None
+
+
+@app.route("/solicitar-acesso", methods=["GET", "POST"])
+def solicitar_acesso():
+    encontrado = None
+    if request.method == "POST":
+        discord_id = request.form.get("discord_id", "").strip()
+        usuario = request.form.get("usuario", "").strip()
+        senha = request.form.get("senha", "")
+        if not discord_id.isdigit() or not usuario or len(senha) < 6:
+            flash("❌ Informe um ID válido, um usuário e uma senha com pelo menos 6 caracteres.")
+        else:
+            encontrado = membro_discord_sync(discord_id)
+            if not encontrado:
+                flash("❌ Não encontrei esse ID no servidor principal da Resenha Máxima.")
+            else:
+                dados = carregar_solicitacoes_acesso()
+                pendente = next((x for x in dados["solicitacoes"] if x.get("discord_id") == discord_id and x.get("status") == "pendente"), None)
+                if pendente:
+                    flash("ℹ️ Já existe uma solicitação pendente para esse Discord.")
+                else:
+                    dados["solicitacoes"].append({
+                        "id": secrets.token_hex(8), "discord_id": discord_id,
+                        "discord_nome": encontrado["nome"], "discord_usuario": encontrado["usuario"],
+                        "usuario": usuario, "senha_hash": generate_password_hash(senha),
+                        "status": "pendente", "criado_em": datetime.now(timezone.utc).isoformat()
+                    })
+                    salvar_solicitacoes_acesso(dados)
+                    flash(f"✅ Solicitação enviada. Identificamos você como {encontrado['nome']}.")
+                    return redirect(url_for("login"))
+    return render_template("solicitar_acesso.html", encontrado=encontrado)
+
+
+@app.route("/acessos/<solicitacao_id>/<acao>", methods=["POST"])
+@login_obrigatorio
+def decidir_acesso(solicitacao_id, acao):
+    if not acesso_total():
+        flash("❌ Sem permissão para gerenciar acessos.")
+        return redirect(url_for("painel", aba="acessos"))
+    dados = carregar_solicitacoes_acesso()
+    item = next((x for x in dados["solicitacoes"] if x.get("id") == solicitacao_id), None)
+    if not item or item.get("status") != "pendente":
+        flash("ℹ️ Essa solicitação não está mais pendente.")
+        return redirect(url_for("painel", aba="acessos"))
+    if acao == "aprovar":
+        usuarios = carregar_usuarios()
+        chave = item["usuario"].casefold()
+        usuarios["usuarios"][chave] = {"usuario": item["usuario"], "discord_id": item["discord_id"], "senha_hash": item["senha_hash"], "nivel_ultimo_login": "revalidado no login"}
+        salvar_usuarios(usuarios)
+        item["status"] = "aprovado"
+        flash(f"✅ Acesso de {item['discord_nome']} aprovado.")
+    else:
+        item["status"] = "recusado"
+        flash(f"❌ Solicitação de {item['discord_nome']} recusada.")
+    item["decidido_por"] = session.get("usuario", "Administrador")
+    item["decidido_em"] = datetime.now(timezone.utc).isoformat()
+    salvar_solicitacoes_acesso(dados)
+    return redirect(url_for("painel", aba="acessos"))
+
+
+def resumo_servidor_sync():
+    base = {"membros": 0, "online": 0, "em_call": 0, "canais_texto": 0, "canais_voz": 0, "calls": [], "atividades": [], "bot_online": bool(bot.is_ready())}
+    if not bot.is_ready() or BOT_LOOP is None:
+        return base
+    try:
+        async def _coletar():
+            guild = bot.get_guild(MAIN_DISCORD_GUILD_ID)
+            if not guild: return base
+            humanos = [m for m in guild.members if not m.bot]
+            base["membros"] = len(humanos)
+            base["online"] = sum(1 for m in humanos if m.status != discord.Status.offline)
+            base["em_call"] = sum(1 for m in humanos if m.voice and m.voice.channel)
+            base["canais_texto"] = len(guild.text_channels); base["canais_voz"] = len(guild.voice_channels)
+            base["calls"] = [{"nome": c.name, "pessoas": [m.display_name for m in c.members if not m.bot]} for c in guild.voice_channels if any(not m.bot for m in c.members)][:8]
+            jogos = {}
+            for m in humanos:
+                for a in getattr(m, "activities", []) or []:
+                    nome = getattr(a, "name", None)
+                    if nome and nome not in {"Custom Status"}:
+                        jogos[nome] = jogos.get(nome, 0) + 1
+            base["atividades"] = sorted([{"nome": k, "quantidade": v} for k,v in jogos.items()], key=lambda x:-x["quantidade"])[:8]
+            return base
+        return asyncio.run_coroutine_threadsafe(_coletar(), BOT_LOOP).result(timeout=8)
+    except Exception:
+        return base
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -3063,7 +3185,7 @@ def resumo_entradas():
 def contexto_painel(
     canal_id=None,
     config_temporaria=None,
-    aba="menus"
+    aba="visao"
 ):
     dados = carregar_menus()
     canais_todos = obter_canais_texto_sync()
@@ -3075,6 +3197,12 @@ def contexto_painel(
         aba = "menus"
 
     abas_validas = {
+        "visao",
+        "membros",
+        "estatisticas",
+        "moderacao",
+        "acessos",
+        "sistemas",
         "menus",
         "modelos",
         "central",
@@ -3248,6 +3376,10 @@ def contexto_painel(
         else dict(IA_CONFIG_PADRAO)
     )
 
+    resumo_servidor = resumo_servidor_sync() if aba in {"visao", "membros", "estatisticas", "sistemas"} else {}
+    solicitacoes_acesso = carregar_solicitacoes_acesso().get("solicitacoes", []) if aba == "acessos" and acesso_total() else []
+    pendencias_acesso = sum(1 for x in carregar_solicitacoes_acesso().get("solicitacoes", []) if x.get("status") == "pendente") if acesso_total() else 0
+
     return {
         "aba": aba,
         "config": config,
@@ -3283,6 +3415,9 @@ def contexto_painel(
         "atualizacoes": atualizacoes,
         "ia_config": ia_config,
         "usuarios_painel": usuarios,
+        "resumo_servidor": resumo_servidor,
+        "solicitacoes_acesso": solicitacoes_acesso,
+        "pendencias_acesso": pendencias_acesso,
         "cargo_eventos_configurado": bool(
             CARGO_EVENTOS_ID
         ),
@@ -3480,7 +3615,7 @@ def criar_estrutura_eventos():
 def painel():
     aba = request.args.get(
         "aba",
-        "menus"
+        "visao"
     )
 
     if request.method == "GET":
@@ -4357,9 +4492,6 @@ def api_roblox_criar_vinculo():
         payload.get("discord_nome")
         or ""
     ).strip()[:150]
-    # Só chega por esta API interna autenticada pelo ROBLOX_VINCULO_SECRET.
-    # O bot envia True apenas quando o membro possui o cargo Conta de testes.
-    modo_teste = payload.get("modo_teste") is True
 
     if not discord_id.isdigit():
         return jsonify({
@@ -4373,12 +4505,6 @@ def api_roblox_criar_vinculo():
     # Reaproveita uma tentativa recém-criada; depois do cooldown, remove a
     # pendência antiga e cria state/PKCE novos.
     agora = datetime.now(timezone.utc)
-    if modo_teste:
-        # Conta de testes sempre recebe um fluxo OAuth novo, sem reutilizar
-        # pendência/cooldown anterior. Isso não remove o vínculo já salvo.
-        for token_existente, pendente_existente in list(dados["pendentes"].items()):
-            if str(pendente_existente.get("discord_id") or "") == discord_id:
-                dados["pendentes"].pop(token_existente, None)
     for token_existente, pendente_existente in list(dados["pendentes"].items()):
         if str(pendente_existente.get("discord_id") or "") != discord_id:
             continue
@@ -4411,7 +4537,6 @@ def api_roblox_criar_vinculo():
         "discord_id": discord_id,
         "discord_nome": discord_nome,
         "guild_id": guild_id,
-        "modo_teste": modo_teste,
         "oauth_state": oauth_state,
         "nonce": nonce,
         "code_verifier": code_verifier,
@@ -4472,8 +4597,7 @@ def roblox_iniciar(token):
     agora = datetime.now(timezone.utc)
     ultimo_inicio = _parse_iso_utc(pendente.get("iniciado_em"))
     if (
-        not bool(pendente.get("modo_teste"))
-        and ultimo_inicio is not None
+        ultimo_inicio is not None
         and (agora - ultimo_inicio).total_seconds()
         < ROBLOX_REABRIR_COOLDOWN_SEGUNDOS
     ):
