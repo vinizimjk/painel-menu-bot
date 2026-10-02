@@ -975,3 +975,4 @@ body{padding-left:250px;background:#0c0d10}.topbar{display:none}.rm-sidebar{posi
 .rm-sidebar .side-link { gap: 8px; }
 .rm-sidebar .side-link span { letter-spacing: .01em; }
 .metric span, .card h2 { letter-spacing: .01em; }
+.login-separator{display:flex;align-items:center;gap:12px;margin:18px 0;color:#777}.login-separator:before,.login-separator:after{content:"";height:1px;background:#333;flex:1}.account-create-link{display:block;text-align:center;padding:12px;border:1px solid #8d6d13;border-radius:10px;color:#e7bd39;text-decoration:none;font-weight:700}.account-create-link:hover{background:#19160d}.role-hierarchy{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.role-level{padding:8px 12px;border:1px solid #343434;border-radius:999px;background:#171717;font-size:.88rem}.role-arrow{align-self:center;color:#777}

@@ -6,6 +6,7 @@ import json
 import random
 import re
 import threading
+import time
 import secrets
 import urllib.parse
 import urllib.request
@@ -32,6 +33,7 @@ if not PANEL_PASSWORD:
         "Crie essa variável no Railway antes de iniciar."
     )
 
+DISCORD_INVITE_URL = os.getenv("DISCORD_INVITE_URL", "").strip()
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -48,6 +50,18 @@ CANAL_TESTE_ID = 1537936115233722388
 # Permissões do /menu deste serviço.
 DONO_ID = 1455937306400653344
 CARGO_DESENVOLVIMENTO_ID = 1533625836874498181
+CARGO_MODERADOR_ID = 1540987356520251482
+CARGO_ADMINISTRADOR_ID = 1533624911912767629
+CARGO_ADMG_ID = 1532613934883016704
+# Departamento de Eventos pode continuar configurado por CARGO_EVENTOS_ID; quando 0,
+# o painel reconhece o cargo pelo nome no servidor.
+PANEL_ROLE_HIERARCHY = [
+    ("eventos", "Departamento de Eventos"),
+    ("moderador", "Moderador"),
+    ("administrador", "Administrador"),
+    ("dev", "Equipe de Desenvolvimento"),
+    ("admg", "ADM-G"),
+]
 MAX_BOTOES = 25
 # =========================================================
 # PERFIL ROBLOX ↔ DISCORD PARA O JOGO
@@ -1382,6 +1396,7 @@ app.secret_key = os.getenv("PANEL_SECRET_KEY") or secrets.token_hex(32)
 
 USERS_FILE = DATA_DIR / "panel_users.json"
 ACCESS_REQUESTS_FILE = DATA_DIR / "panel_access_requests.json"
+ACCOUNT_VERIFICATIONS_FILE = DATA_DIR / "panel_account_verifications.json"
 ADMIN_LOG_FILE = DATA_DIR / "admin_logs.json"
 ENTRADAS_FILE = DATA_DIR / "entradas.json"
 
@@ -2547,53 +2562,29 @@ async def verificar_permissao_discord(discord_id):
                 "erro": "Esse usuário não foi encontrado no servidor."
             }
 
-    if membro.id == DONO_ID:
-        return {
-            "ok": True,
-            "nivel": "full",
-            "nome": str(membro),
-            "erro": None
-        }
+    ids_cargos = {cargo.id for cargo in membro.roles}
 
-    ids_cargos = {
-        cargo.id
-        for cargo in membro.roles
-    }
-
+    # Hierarquia do painel: Eventos → Moderador → Administrador → DEV → ADM-G.
+    if membro.id == DONO_ID or CARGO_ADMG_ID in ids_cargos:
+        return {"ok": True, "nivel": "admg", "nome": str(membro), "erro": None}
     if CARGO_DESENVOLVIMENTO_ID in ids_cargos:
-        return {
-            "ok": True,
-            "nivel": "full",
-            "nome": str(membro),
-            "erro": None
-        }
+        return {"ok": True, "nivel": "dev", "nome": str(membro), "erro": None}
+    if CARGO_ADMINISTRADOR_ID in ids_cargos:
+        return {"ok": True, "nivel": "administrador", "nome": str(membro), "erro": None}
+    if CARGO_MODERADOR_ID in ids_cargos:
+        return {"ok": True, "nivel": "moderador", "nome": str(membro), "erro": None}
 
     cargo_eventos_encontrado = False
-
     if CARGO_EVENTOS_ID:
-        cargo_eventos_encontrado = (
-            CARGO_EVENTOS_ID in ids_cargos
-        )
-    else:
+        cargo_eventos_encontrado = CARGO_EVENTOS_ID in ids_cargos
+    if not cargo_eventos_encontrado:
         for cargo in membro.roles:
             nome = normalizar_nome_cargo(cargo.name)
-
-            if nome in {
-                "departamento de eventos",
-                "departamento eventos",
-                "equipe de eventos",
-                "eventos"
-            }:
+            if nome in {"departamento de eventos", "departamento eventos", "equipe de eventos", "eventos"}:
                 cargo_eventos_encontrado = True
                 break
-
     if cargo_eventos_encontrado:
-        return {
-            "ok": True,
-            "nivel": "eventos",
-            "nome": str(membro),
-            "erro": None
-        }
+        return {"ok": True, "nivel": "eventos", "nome": str(membro), "erro": None}
 
     if CARGO_BANIMENTOS_ID in ids_cargos:
         return {
@@ -2620,12 +2611,10 @@ async def verificar_permissao_discord(discord_id):
         }
 
     return {
-        "ok": False,
-        "nivel": None,
+        "ok": True,
+        "nivel": "restrito",
         "nome": str(membro),
-        "erro": (
-            "O usuário não possui nenhum dos cargos autorizados para o painel."
-        )
+        "erro": None
     }
 
 
@@ -2885,7 +2874,7 @@ def nivel_sessao():
 
 
 def acesso_total():
-    return nivel_sessao() == "full"
+    return nivel_sessao() in {"admg", "dev", "administrador"} or session.get("login_mestre") is True
 
 
 def canal_permitido_para_sessao(canal_id, canais=None):
@@ -2985,65 +2974,188 @@ def membro_discord_sync(discord_id):
         return None
 
 
-@app.route("/solicitar-acesso", methods=["GET", "POST"])
-def solicitar_acesso():
-    encontrado = None
+def _carregar_verificacoes_conta():
+    if not ACCOUNT_VERIFICATIONS_FILE.exists():
+        return {"verificacoes": {}}
+    try:
+        dados = json.loads(ACCOUNT_VERIFICATIONS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(dados, dict) or not isinstance(dados.get("verificacoes"), dict):
+            return {"verificacoes": {}}
+        return dados
+    except Exception:
+        return {"verificacoes": {}}
+
+
+def _salvar_verificacoes_conta(dados):
+    tmp = ACCOUNT_VERIFICATIONS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(ACCOUNT_VERIFICATIONS_FILE)
+
+
+def _gerar_token_25():
+    alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "".join(secrets.choice(alfabeto) for _ in range(25))
+
+
+class ConfirmarContaPainelView(discord.ui.View):
+    def __init__(self, verificacao_id):
+        super().__init__(timeout=600)
+        self.verificacao_id = verificacao_id
+
+    @discord.ui.button(label="Sim, fui eu", style=discord.ButtonStyle.success)
+    async def confirmar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        dados = _carregar_verificacoes_conta()
+        item = dados["verificacoes"].get(self.verificacao_id)
+        if not item or item.get("status") != "aguardando_confirmacao":
+            await interaction.response.send_message("Esta verificação expirou ou já foi usada.", ephemeral=True)
+            return
+        if str(interaction.user.id) != str(item.get("discord_id")):
+            await interaction.response.send_message("Esta verificação não pertence à sua conta.", ephemeral=True)
+            return
+        token = _gerar_token_25()
+        item["token_hash"] = generate_password_hash(token)
+        item["status"] = "token_emitido"
+        item["token_expira_em"] = int(time.time()) + 600
+        _salvar_verificacoes_conta(dados)
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(
+            "**Código de verificação do painel RESENHA MÁXIMA**\n\n"
+            f"```{token}```\n"
+            "Use o menu da mensagem/código para copiar e cole no site. "
+            "O código possui 25 caracteres, vale por 10 minutos e só pode ser usado uma vez.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Não fui eu", style=discord.ButtonStyle.danger)
+    async def negar(self, interaction: discord.Interaction, button: discord.ui.Button):
+        dados = _carregar_verificacoes_conta()
+        item = dados["verificacoes"].get(self.verificacao_id)
+        if item:
+            item["status"] = "negado"
+            _salvar_verificacoes_conta(dados)
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(content="Solicitação cancelada. Nenhuma conta foi criada.", view=self)
+
+
+async def _enviar_confirmacao_conta(discord_id, verificacao_id):
+    guild = bot.get_guild(MAIN_DISCORD_GUILD_ID)
+    if guild is None:
+        return False, "Servidor principal indisponível."
+    membro = guild.get_member(int(discord_id))
+    if membro is None:
+        try:
+            membro = await guild.fetch_member(int(discord_id))
+        except Exception:
+            return False, "Não encontrei esse membro no servidor."
+    try:
+        await membro.send(
+            "**Verificação — RESENHA MÁXIMA**\n\n"
+            "Foi solicitado o cadastro de uma conta no painel usando seu ID do Discord.\n"
+            "Foi você que iniciou essa solicitação?",
+            view=ConfirmarContaPainelView(verificacao_id),
+        )
+        return True, membro.display_name
+    except discord.Forbidden:
+        return False, "Não consegui enviar DM. Ative mensagens diretas deste servidor e tente novamente."
+    except Exception as erro:
+        return False, f"Falha ao enviar DM: {erro}"
+
+
+@app.route("/criar-conta", methods=["GET", "POST"])
+def criar_conta():
     if request.method == "POST":
         discord_id = request.form.get("discord_id", "").strip()
         usuario = request.form.get("usuario", "").strip()
         senha = request.form.get("senha", "")
         if not discord_id.isdigit() or not usuario or len(senha) < 6:
-            flash("❌ Informe um ID válido, um usuário e uma senha com pelo menos 6 caracteres.")
-        else:
-            encontrado = membro_discord_sync(discord_id)
-            if not encontrado:
-                flash("❌ Não encontrei esse ID no servidor principal da Resenha Máxima.")
-            else:
-                dados = carregar_solicitacoes_acesso()
-                pendente = next((x for x in dados["solicitacoes"] if x.get("discord_id") == discord_id and x.get("status") == "pendente"), None)
-                if pendente:
-                    flash("ℹ️ Já existe uma solicitação pendente para esse Discord.")
-                else:
-                    dados["solicitacoes"].append({
-                        "id": secrets.token_hex(8), "discord_id": discord_id,
-                        "discord_nome": encontrado["nome"], "discord_usuario": encontrado["usuario"],
-                        "usuario": usuario, "senha_hash": generate_password_hash(senha),
-                        "status": "pendente", "criado_em": datetime.now(timezone.utc).isoformat()
-                    })
-                    salvar_solicitacoes_acesso(dados)
-                    flash(f"✅ Solicitação enviada. Identificamos você como {encontrado['nome']}.")
-                    return redirect(url_for("login"))
-    return render_template("solicitar_acesso.html", encontrado=encontrado)
-
-
-@app.route("/acessos/<solicitacao_id>/<acao>", methods=["POST"])
-@login_obrigatorio
-def decidir_acesso(solicitacao_id, acao):
-    if not acesso_total():
-        flash("❌ Sem permissão para gerenciar acessos.")
-        return redirect(url_for("painel", aba="acessos"))
-    dados = carregar_solicitacoes_acesso()
-    item = next((x for x in dados["solicitacoes"] if x.get("id") == solicitacao_id), None)
-    if not item or item.get("status") != "pendente":
-        flash("ℹ️ Essa solicitação não está mais pendente.")
-        return redirect(url_for("painel", aba="acessos"))
-    if acao == "aprovar":
+            flash("Informe um ID válido, um usuário e uma senha com pelo menos 6 caracteres.")
+            return render_template("criar_conta.html")
         usuarios = carregar_usuarios()
-        chave = item["usuario"].casefold()
-        usuarios["usuarios"][chave] = {"usuario": item["usuario"], "discord_id": item["discord_id"], "senha_hash": item["senha_hash"], "nivel_ultimo_login": "revalidado no login"}
-        salvar_usuarios(usuarios)
-        item["status"] = "aprovado"
-        flash(f"✅ Acesso de {item['discord_nome']} aprovado.")
-    else:
-        item["status"] = "recusado"
-        flash(f"❌ Solicitação de {item['discord_nome']} recusada.")
-    item["decidido_por"] = session.get("usuario", "Administrador")
-    item["decidido_em"] = datetime.now(timezone.utc).isoformat()
-    salvar_solicitacoes_acesso(dados)
-    return redirect(url_for("painel", aba="acessos"))
+        if usuario.casefold() in usuarios["usuarios"]:
+            flash("Esse nome de usuário já está em uso.")
+            return render_template("criar_conta.html")
+        vid = secrets.token_hex(12)
+        dados = _carregar_verificacoes_conta()
+        dados["verificacoes"][vid] = {
+            "discord_id": discord_id,
+            "usuario": usuario,
+            "senha_hash": generate_password_hash(senha),
+            "status": "aguardando_confirmacao",
+            "criado_em": int(time.time()),
+        }
+        _salvar_verificacoes_conta(dados)
+        if not bot.is_ready() or BOT_LOOP is None:
+            flash("O bot ainda não está conectado ao Discord. Tente novamente em instantes.")
+            return render_template("criar_conta.html")
+        try:
+            ok, info = asyncio.run_coroutine_threadsafe(
+                _enviar_confirmacao_conta(discord_id, vid), BOT_LOOP
+            ).result(timeout=12)
+        except Exception as erro:
+            ok, info = False, str(erro)
+        if not ok:
+            dados = _carregar_verificacoes_conta()
+            dados["verificacoes"].pop(vid, None)
+            _salvar_verificacoes_conta(dados)
+            flash(info)
+            return render_template("criar_conta.html")
+        return redirect(url_for("verificar_criacao_conta", verificacao_id=vid))
+    return render_template("criar_conta.html")
+
+
+@app.route("/criar-conta/verificar/<verificacao_id>", methods=["GET", "POST"])
+def verificar_criacao_conta(verificacao_id):
+    dados = _carregar_verificacoes_conta()
+    item = dados["verificacoes"].get(verificacao_id)
+    if not item:
+        flash("Verificação não encontrada ou expirada.")
+        return redirect(url_for("criar_conta"))
+    if request.method == "POST":
+        token = request.form.get("token", "").strip().upper()
+        if item.get("status") != "token_emitido":
+            flash("Confirme primeiro a solicitação na DM do Discord.")
+        elif int(time.time()) > int(item.get("token_expira_em") or 0):
+            item["status"] = "expirado"
+            _salvar_verificacoes_conta(dados)
+            flash("O token expirou. Inicie o cadastro novamente.")
+        elif not check_password_hash(item.get("token_hash", ""), token):
+            item["tentativas"] = int(item.get("tentativas") or 0) + 1
+            if item["tentativas"] >= 5:
+                item["status"] = "bloqueado"
+            _salvar_verificacoes_conta(dados)
+            flash("Token inválido.")
+        else:
+            usuarios = carregar_usuarios()
+            chave = item["usuario"].casefold()
+            if chave in usuarios["usuarios"]:
+                flash("Esse usuário já foi criado.")
+            else:
+                usuarios["usuarios"][chave] = {
+                    "usuario": item["usuario"],
+                    "discord_id": item["discord_id"],
+                    "senha_hash": item["senha_hash"],
+                    "nivel_ultimo_login": "validado por DM + token",
+                }
+                salvar_usuarios(usuarios)
+                item["status"] = "usado"
+                item.pop("token_hash", None)
+                _salvar_verificacoes_conta(dados)
+                flash("Conta criada. Agora você já pode entrar no painel.")
+                return redirect(url_for("login"))
+    return render_template("verificar_conta.html", verificacao_id=verificacao_id, status=item.get("status"))
+
+
+# Compatibilidade com links antigos.
+@app.route("/solicitar-acesso")
+def solicitar_acesso():
+    return redirect(url_for("criar_conta"), code=301)
 
 
 def resumo_servidor_sync():
+
     base = {"membros": 0, "online": 0, "em_call": 0, "canais_texto": 0, "canais_voz": 0, "calls": [], "atividades": [], "bot_online": bool(bot.is_ready())}
     if not bot.is_ready() or BOT_LOOP is None:
         return base
@@ -3260,18 +3372,19 @@ def contexto_painel(
         "entradas",
         "atualizacoes",
         "ia",
+        "restrito",
     }
 
     if aba not in abas_validas:
         aba = "menus"
 
-    if aba == "entradas" and nivel_sessao() not in {"full", "entrada"}:
+    if aba == "entradas" and nivel_sessao() not in {"admg", "dev", "administrador", "moderador"}:
         aba = "menus"
 
-    if aba == "central" and nivel_sessao() not in {"full", "banimentos", "entrada", "minecraft"}:
+    if aba == "central" and nivel_sessao() not in {"admg", "dev", "administrador", "moderador"}:
         aba = "menus"
 
-    if aba == "modelos" and nivel_sessao() not in {"full", "banimentos", "entrada", "minecraft"}:
+    if aba == "modelos" and nivel_sessao() not in {"admg", "dev", "administrador", "moderador"}:
         aba = "menus"
 
     if aba == "atualizacoes" and not acesso_total():
@@ -3403,7 +3516,7 @@ def contexto_painel(
     logs_admin = (
         carregar_logs_administrativos()
         if aba == "central"
-        and nivel_sessao() in {"full", "banimentos", "entrada", "minecraft"}
+        and nivel_sessao() in {"admg", "dev", "administrador", "moderador"}
         else []
     )
 
@@ -3448,9 +3561,9 @@ def contexto_painel(
         "max_botoes": MAX_BOTOES,
         "nivel": nivel_sessao(),
         "acesso_total": acesso_total(),
-        "pode_ver_modelos": nivel_sessao() in {"full", "banimentos", "entrada", "minecraft"},
-        "pode_ver_central": nivel_sessao() in {"full", "banimentos", "entrada", "minecraft"},
-        "pode_ver_entradas": nivel_sessao() in {"full", "entrada"},
+        "pode_ver_modelos": nivel_sessao() in {"admg", "dev", "administrador", "moderador"},
+        "pode_ver_central": nivel_sessao() in {"admg", "dev", "administrador", "moderador"},
+        "pode_ver_entradas": nivel_sessao() in {"admg", "dev", "administrador", "moderador"},
         "pode_ver_atualizacoes": acesso_total(),
         "pode_ver_ia": acesso_total(),
         "usuario_logado": session.get(
@@ -3474,6 +3587,7 @@ def contexto_painel(
         "cargo_eventos_configurado": bool(
             CARGO_EVENTOS_ID
         ),
+        "discord_invite_url": DISCORD_INVITE_URL,
         "canal_eventos_configurado": bool(
             CANAL_EVENTOS_ID
         ),

@@ -39,7 +39,9 @@
         <button type="submit">Entrar no painel</button>
       </form>
 
-      <div style="margin-top:16px;text-align:center"><span style="color:#777">ou</span><br><a href="{{ url_for('solicitar_acesso') }}" style="display:inline-block;margin-top:12px;color:#d39b16;font-weight:700">📝 Solicitar acesso ao painel</a></div><p class="login-help">O bot confere seu ID no servidor e a administração aprova ou recusa a solicitação.</p>
+      <div class="login-separator"><span>ou</span></div>
+      <a class="account-create-link" href="{{ url_for('criar_conta') }}">Criar conta</a>
+      <p class="login-help">A identidade é confirmada por DM do Discord e token temporário. O cargo no servidor define quais áreas do painel ficam disponíveis.</p>
     </section>
   </main>
 </body>
