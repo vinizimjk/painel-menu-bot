@@ -2873,6 +2873,14 @@ def nivel_sessao():
     return session.get("nivel")
 
 
+def acesso_painel_autorizado():
+    # Qualquer nível oficial da hierarquia pode entrar no painel.
+    # As permissões específicas por cargo serão separadas depois.
+    return nivel_sessao() in {
+        "eventos", "moderador", "administrador", "dev", "admg"
+    } or session.get("login_mestre") is True
+
+
 def acesso_total():
     return nivel_sessao() in {"admg", "dev", "administrador"} or session.get("login_mestre") is True
 
@@ -3356,7 +3364,12 @@ def contexto_painel(
         canais_todos
     )
 
-    if nivel_sessao() == "eventos":
+    # Segurança: usuário autenticado sem cargo autorizado só pode ver
+    # a página restrita. Isso é aplicado no servidor, não apenas no menu.
+    if not acesso_painel_autorizado():
+        aba = "restrito"
+        canais = []
+    elif nivel_sessao() == "eventos":
         aba = "menus"
 
     abas_validas = {
@@ -3801,6 +3814,12 @@ def painel():
                 aba=aba
             )
         )
+
+    # Conta sem cargo autorizado nunca pode executar ações administrativas,
+    # mesmo tentando enviar o POST manualmente.
+    if not acesso_painel_autorizado():
+        flash("Acesso restrito. Sua conta não possui um cargo autorizado no painel.")
+        return redirect(url_for("painel", aba="restrito"))
 
     # Somente a aba de menus usa o POST principal.
     canal_id = request.form.get(
@@ -4645,7 +4664,10 @@ def remover_nota_bot():
     return redirect(url_for("painel", aba="nota_bot"))
 
 @app.route("/api/ia-config")
+@somente_full
 def api_ia_config():
+    # Configuração administrativa: nunca deve ser exposta para conta restrita
+    # nem por acesso direto à URL da API.
     resposta = carregar_config_ia()
     resposta["ok"] = True
     return jsonify(resposta)

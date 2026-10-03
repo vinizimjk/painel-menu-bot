@@ -45,6 +45,7 @@ alt="Logo Resenha Máxima">
     <button class="sidebar-toggle" onclick="document.body.classList.toggle('sidebar-open')">☰</button>
     <aside class="rm-sidebar">
       <div class="side-brand"><img src="{{ url_for('static', filename='logo_resenha_maxima.png') }}"><div><b>RESENHA MÁXIMA</b><small>Painel</small></div></div>
+      {% if nivel != 'restrito' %}
       <a class="side-link {% if aba=='visao' %}active{% endif %}" href="{{ url_for('painel', aba='visao') }}"><span>Visão Geral</span></a>
       <div class="side-label">SERVIDOR</div>
       <a class="side-link {% if aba=='membros' %}active{% endif %}" href="{{ url_for('painel', aba='membros') }}"><span>Membros</span></a>
@@ -60,6 +61,10 @@ alt="Logo Resenha Máxima">
       <a class="side-link {% if aba=='nota_bot' %}active{% endif %}" href="{{ url_for('painel', aba='nota_bot') }}"><span>Nota do Bot</span></a>
       <a class="side-link {% if aba=='menus' %}active{% endif %}" href="{{ url_for('painel', aba='menus') }}"><span>Menus Discord</span></a>
       <a class="side-link {% if aba=='sistemas' %}active{% endif %}" href="{{ url_for('painel', aba='sistemas') }}"><span>Saúde dos Sistemas</span></a>
+      {% else %}
+      <div class="side-section-label">ACESSO</div>
+      <a class="side-link active" href="{{ url_for('painel', aba='restrito') }}"><span>Acesso restrito</span></a>
+      {% endif %}
       <div class="side-user"><b>{{ discord_nome or usuario_logado }}</b><small>{{ nivel }}</small><a href="{{ url_for('sair') }}">Sair</a></div>
     </aside>
 
