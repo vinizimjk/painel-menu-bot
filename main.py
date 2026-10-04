@@ -2873,6 +2873,26 @@ def nivel_sessao():
     return session.get("nivel")
 
 
+def revalidar_nivel_sessao():
+    """Atualiza o cargo do usuário logado antes de decidir a aba.
+
+    Evita sessão antiga (ex.: Eventos/restrito) mandar ADM-G/DEV/ADM/MOD
+    para Menus Discord mesmo depois de o Discord já informar o cargo correto.
+    Em falha temporária do Discord, mantém a sessão atual para não derrubar o painel.
+    """
+    if session.get("login_mestre") is True:
+        return
+    discord_id = session.get("discord_id")
+    if not discord_id:
+        return
+    permissao = verificar_permissao_discord_sync(discord_id)
+    if not permissao.get("ok"):
+        return
+    session["nivel"] = permissao.get("nivel") or "restrito"
+    if permissao.get("nome"):
+        session["discord_nome"] = permissao.get("nome")
+
+
 def acesso_painel_autorizado():
     # Qualquer nível oficial da hierarquia pode entrar no painel.
     # As permissões específicas por cargo serão separadas depois.
@@ -3532,7 +3552,7 @@ def contexto_painel(
 
     logs_admin = (
         carregar_logs_administrativos()
-        if aba == "central"
+        if aba in {"central", "moderacao"}
         and nivel_sessao() in {"admg", "dev", "administrador", "moderador"}
         else []
     )
@@ -3797,6 +3817,10 @@ def criar_estrutura_eventos():
 @app.route("/", methods=["GET", "POST"])
 @login_obrigatorio
 def painel():
+    # V45: revalida o cargo no Discord em cada abertura do painel para que
+    # uma sessão antiga não redirecione Central/Entradas/Moderação para Menus.
+    revalidar_nivel_sessao()
+
     aba = request.args.get(
         "aba",
         "visao"
@@ -4669,6 +4693,21 @@ def api_ia_config():
     # Configuração administrativa: nunca deve ser exposta para conta restrita
     # nem por acesso direto à URL da API.
     resposta = carregar_config_ia()
+    resposta["ok"] = True
+    return jsonify(resposta)
+
+
+@app.get("/api/bot-config-public")
+def api_bot_config_public():
+    """Config operacional consumida pelo bot.
+
+    Mantém /api/ia-config protegido para o painel e expõe somente os campos
+    operacionais necessários ao bot/Presence/Nota do Bot, sem contas, cargos,
+    logs, tokens ou outros dados administrativos.
+    """
+    config = carregar_config_ia()
+    permitidos = set(IA_CONFIG_PADRAO.keys())
+    resposta = {chave: config.get(chave, IA_CONFIG_PADRAO.get(chave)) for chave in permitidos}
     resposta["ok"] = True
     return jsonify(resposta)
 
